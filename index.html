@@ -1,0 +1,1006 @@
+<!doctype html>
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<head>
+  <meta charset="utf-8" />
+  <title>HDRScope</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="favicon_hdrscope.ico" />
+</head>
+
+<body>
+  <div id="Settings">
+    <div id="top-controls-container">
+    <fieldset>
+      <legend>Content</legend>
+      <!-- Content selection -->
+      <div class="fieldset-content">
+        <input type="file" id="UploadButton" style="display: none" />
+        <input type="file" id="JsonUpload" accept=".json" style="display: none" />
+        <button type="button" id="UploadButtonFake">Upload Image/Video</button>
+      <label for="Content">
+        <button class="small-button" id="BrowseContentButton" title="Browse content visually">
+          Select Content 🖼️
+        </button>
+        <select name="Content" id="Content">
+          <!-- Content is populated dynamically -->
+        </select>
+        <button class="small-button" id="ShowMediaInfoButton" title="Show media info">
+          ℹ️
+        </button>
+      </label>
+      <label for="SignalTransfer"
+        >Transfer<span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">The transfer function of the input content.
+            Automatically detected when possible.
+          </span>
+        </span>
+        <select name="SignalTransfer" id="SignalTransfer">
+          <option value="13">sRGB</option>
+          <option value="16" selected>PQ</option>
+          <option value="18">HLG</option>
+          <option value="1">Rec.709</option>
+          <option value="4">Gamma 2.2</option>
+          <option value="6">Gamma 2.8</option>
+          <option value="14">Rec.2020 10bit</option>
+          <option value="15">Rec.2020 12bit</option>
+        </select>
+      </label>
+      <label for="SignalPrimaries"
+        >Primaries<span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">The color primaries of the input content.
+            Automatically detected when possible.</span>
+        </span>
+        <select name="SignalPrimaries" id="SignalPrimaries">
+          <option value="1">sRGB</option>
+          <option value="12">P3</option>
+          <option value="9" selected>ITU-R BT.2020</option>
+        </select>
+      </label>
+      </div>
+    </fieldset>
+      <div class="flex-filler"></div>
+      <div id="ui-buttons-container">
+        <span id="Warnings" style="font-weight: bold" hidden></span>
+        <input type="button" id="HideUi" value="🔽" title="Collapse the UI [Escape]" />
+      </div>
+    </div>
+    <fieldset>
+      <legend>SMPTE ST 2094-50 Metadata</legend>
+      <div class="fieldset-content">
+        <label for="Metadata">
+          Type
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              SMPTE ST 2094-50 metadata generation algorithm
+            </span>
+          </span>
+          <select name="Metadata" id="Metadata">
+            <option value="fromfile" selected>Embedded metadata in media file</option>
+            <option value="custom">Custom from JSON file...</option>
+            <!-- Automatically populated. -->
+          </select>
+      </label>
+      <label for="ComponentMix">
+        Mix
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Override the SMPTE ST 2094-50 component mixing function. Affects the rendering of colors,
+            especially very saturated ones.
+            <ul>
+              <li>
+                <b>Default</b>: use the values in the metadata
+              </li>
+              <li>
+                <b>Max RGB</b>: max(R, G, B)
+              </li>
+              <li>
+                <b>Component</b>: the current channel (each channel is tone mapped separately)
+              </li>
+              <li>
+                <b>Avg RGB 0.5 Max 0.5</b>: R*1/6 + G*1/6 + B*1/6 + max(R, G, B)*1/2
+              </li>
+              <li>
+                <b>Luma</b>: R*0.2627 + G*0.678 + B*0.0593
+              </li>
+              <li>
+                <b>Max 0.5 Component 0.5</b>: max(R, G, B)*0.5 + current_channel*0.5
+              </li>
+              <li>
+                <b>Max 0.5 Min 0.5</b>: max(R, G, B)*0.5 + min(R, G, B)*0.5
+              </li>
+              <li>
+                <b>Luma 0.5 Max 0.5</b>: Luma*0.5 + max(R, G, B)*0.5
+              </li>
+              <li>
+                <b>Luma 0.5 Component 0.5</b>: Luma*0.5 + current_channel*0.5
+              </li>
+            </ul>
+          </span>
+        </span>
+        <select name="ComponentMix" id="ComponentMix">
+          <option value="default" selected>Default</option>
+          <option value="max">Max RGB</option>
+          <option value="channel">Component</option>
+          <option value="avg_max">Avg RGB 0.5 Max 0.5</option>
+          <option value="luma">Luma</option>
+          <option value="max_channel_mix">Max 0.5 Component 0.5</option>
+          <option value="max_min_mix">Max 0.5 Min 0.5</option>
+          <option value="luma_max_mix">Luma 0.5 Max 0.5</option>
+          <option value="luma_channel_mix">Luma 0.5 Component 0.5</option>
+        </select>
+      </label>
+      <label for="DynamicAgtm">
+        Dynamic 2094-50
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            "Off" means 2094-50 metadata is computed only once from the first frame and reused for all
+            frames. "On Seek" means it is recomputed on timeline interaction but not during
+            playback. "All frames" means it is computed for all frames upfront.
+          </span>
+        </span>
+        <select name="DynamicAgtm" id="DynamicAgtm" disabled>
+          <option value="off" selected>Off</option>
+          <option value="seek">On Seek</option>
+          <option value="all">All frames (slow)</option>
+        </select>
+        <span id="DynamicAgtmProgress"></span>
+        <button type="button" id="PauseResumeDynamicAgtmButton" hidden>Pause</button>
+      </label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Headroom</legend>
+      <!-- Headroom sliders -->
+      <table style="table-layout: auto; width: 100%; text-align: left">
+        <tr>
+        <td style="width: 200px; text-wrap: nowrap">
+          Available native headroom
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              The maximum ratio of HDR white to SDR white that the display can produce. This is a
+              property of the display hardware and operating system.
+            </span>
+          </span>
+        </td>
+        <td style="width: 160px">
+          <span id="NativeHeadroomLog2" style="font-family: monospace">n/a</span> (log2)
+          <span id="NativeHeadroomLinear" style="font-family: monospace">n/a</span> (linear)
+        </td>
+        <td style="width: 200px">
+          <label for="NativeNits">
+          Display nits<br />
+          <select style="width: 80px" name="NativeNitsPresets" id="NativeNitsPresets">
+            <option value="sdr_nits" selected>
+              Max nits computed from SDR white (enter SDR nits in the field)
+            </option>
+            <option value="0">Custom max nits</option>
+            <option value="200">
+              Foxconn Precision 27" external monitor P2718EC at 40% brightness (SDR 200 nits)
+            </option>
+            <option value="500">
+              Lenovo Thinkpad Glossy UHD at maximum brightness (SDR 500 nits)
+            </option>
+            <option value="1600">Apple M1-4 at brightness >20% (HDR 1600 nits)</option>
+            <option value="2000">iPhone 16 Pro (HDR 2000 nits)</option>
+            <option value="3000">Google Pixel 9 Pro (HDR 3000 nits)</option>
+          </select>
+          <input
+            id="NativeNits"
+            type="number"
+            min="100"
+            max="20000"
+            step="100"
+            value="200"
+            style="width: 60px"
+          />
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Maximum luminance of the display (in nits). This value is used for HDR10+ rendering.
+              <br /><br />
+              In <b>'Calculated from SDR white'</b> mode, the input field contains the SDR white
+              level. The maximum luminance is computed as: <i>SDR white * current linear headroom</i>
+              (including simulated headroom).
+              <br /><br />
+              In other modes, (presets or 'Custom max nits'), the input field represents the
+              display's actual maximum brightness. The white point scales down if the headroom
+              slider is moved below native, but does not go up when using simulated headroom since
+              the actual maximum brightness of the display does not change.
+              This is more physically accurate, if the value set matches the display's actual
+              maximum brightness.
+            </span>
+          </span>
+          </label>
+        </td>
+        <td>
+          <div style="padding: 0 8px">
+            <div style="width: 100%">
+              <div id="NativeHeadroomArrow">
+                <div>
+                  <button id="SetHeadroomToNativeButton">↓</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Headroom (<span id="HeadroomStatus">SDR</span>)
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Headroom value used for rendering. If below the native headroom, only part of the
+              available headroom is used. If above the native headroom, the white point is
+              artificially lowered (background is made gray) to simulate a larger headroom.
+            </span>
+          </span>
+        </td>
+        <td>
+          <span id="HeadroomLog2" style="font-family: monospace">0.00</span> (log2)
+          <span id="HeadroomLinear" style="font-family: monospace">1.00</span> (linear)
+        </td>
+        <td><span id="HeadroomNits" style="font-family: monospace">400</span> nits</td>
+        <td>
+          <input
+            id="HeadroomSlider"
+            list="HeadroomTickmarks"
+            style="width: 100%"
+            type="range"
+            min="0"
+            max="4"
+            step="0.001"
+            value="0"
+          />
+        </td>
+        </tr>
+      </table>
+    </fieldset>
+    <datalist id="HeadroomTickmarks">
+      <option value="0" label="0"></option>
+      <option value="1" label="1"></option>
+      <option value="2" label="2"></option>
+      <option value="3" label="3"></option>
+      <option value="4" label="4"></option>
+    </datalist>
+
+    <fieldset>
+      <legend>Panels</legend>
+      <!-- Panel visibility toggles -->
+      <div id="PanelToggles">
+        <select id="PanelDisplayMode">
+          <option value="sbs" selected>Side-by-side (S)</option>
+          <option value="flip">Flip (F)</option>
+        </select>
+      <label for="ToggleNative">
+        Native
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Displays the content as-is, using an &lt;img&gt; tag for images, or &lt;video&gt; for
+            videos. Ignores the headroom slider and transfer/primaries settings.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleNative" />
+      </label>
+      <label for="ToggleSdr">
+        2D canvas
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Renders the content in SDR using default 2D canvas rendering.
+            Ignores the headroom slider and transfer/primaries settings.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleSdr" />
+      </label>
+      <label for="ToggleAgtm">
+        2094-50
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Renders the content using SMPTE ST 2094-50 metadata.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleAgtm" />
+      </label>
+      <label for="ToggleAgtmLut">
+        2094-50 (LUT)
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Renders the content using SMPTE ST 2094-50 metadata, using a 3D LUT and/or 1D LUT,
+            mimicking the Android LUT API. This is used to simulate hardware rendering. In general,
+            LUT rendering is an approximation since interpolation is used.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleAgtmLut" />
+      </label>
+      <label for="ToggleHdr10plus">
+        HDR10+
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Renders the content using HDR10+ dynamic metadata if available, otherwise shows a blue
+            rectangle. Uses the Reference Method from Annex F of ATSC A/341:2024-04.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleHdr10plus" />
+      </label>
+      <label for="ToggleHdr">
+        HDR
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Renders the content according to its transfer function definition (simple naive
+            rendering). For PQ, highlights get clipped. For HLG, the HLG OOTF function is applied to
+            tone map to the current display 'nits' settings.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleHdr" />
+      </label>
+      <label for="ToggleLuma">
+        Luma
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">Visualizes the luminance or individual color channels.</span>
+        </span>
+        <input type="checkbox" id="ToggleLuma" />
+      </label>
+      <input
+        type="button"
+        id="FlipButton"
+        value="Flip (F)"
+        title="Flip between the selected panels (press F)"
+        hidden
+      />
+      Curves:
+      <label for="ToggleCurves">
+        2094-50
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Shows the tone mapping curve used by the 2094-50 algorithm.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleCurves" />
+      </label>
+      <label for="ToggleHdr10pcurves">
+        HDR10+
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Shows the tone mapping curve derived from HDR10+ metadata.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleHdr10pcurves" />
+      </label>
+      <label for="ToggleHdrcurves">
+        HDR
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Shows the tone mapping curve used for generic HDR rendering.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleHdrcurves" />
+      </label>
+      Metadata:
+      <label for="ToggleStats">
+        Stats
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Displays statistics about the image pixel values distribution.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleStats" />
+      </label>
+
+      <label for="ToggleJson">
+        2094-50
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">Displays 2094-50 metadata in JSON format.</span>
+        </span>
+        <input type="checkbox" id="ToggleJson" />
+      </label>
+      <label for="ToggleSmpte209440" title="SMPTE 2094-40">
+        HDR10+
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">Displays the raw SMPTE 2094-40 (HDR10+) metadata.</span>
+        </span>
+        <input type="checkbox" id="ToggleSmpte209440" />
+      </label>
+      Other:
+      <label for="ToggleSdrBloat">
+        SDR content
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Adds SDR images around the main content to simulate a mixed SDR/HDR environment.
+          </span>
+        </span>
+        <input type="checkbox" id="ToggleSdrBloat" />
+      </label>
+      <label for="ShowClamped">
+        Show clamped
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Visualize pixels that got clamped because the tone mapped values fall outside of the
+            content's color space (for the given headroom) in pink, or outside of the display-P3
+            color space in cyan.
+          </span>
+        </span>
+        <input type="checkbox" id="ShowClamped" />
+      </label>
+      </div>
+    </fieldset>
+
+    <!-- Frame selector if video -->
+    <table id="TimeSliderTable" hidden>
+      <tr>
+        <td>
+          <input style="width: 65px" id="TimeSliderValue" min="0" max="5" step="0.001" value="0" />
+        </td>
+        <td><button id="PlayPause">&#x23EF;</button></td>
+        <td style="width: 100%">
+          <input
+            id="TimeSlider"
+            noalterbackground
+            type="range"
+            min="0"
+            max="5"
+            step="0.001"
+            value="0"
+            style="width: 100%"
+          /><br />
+        </td>
+        <td><button id="LoopButton" title="Toggle loop">&#x1F501;</button></td>
+      </tr>
+
+      <tr></tr>
+    </table>
+  </div>
+
+  <div class="sdr-bloat-parent" hidden>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/eugene-golovesov-CZp37PNaJaE-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/livia-NEFZEwCTyb0-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/marcio-pego-Klonx7jBWyk-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/ahmet-yuksek-mybaeBtxOj8-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/annie-spratt-L3XvNXgd1tc-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/branislav-rodman-04Fr3OtU9Zo-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/christian-lue-wXW4L7yqPJ4-unsplash.jpg" />
+    </div>
+  </div>
+
+  <!-- This area takes the rest of the sceen. -->
+  <div id="Panels">
+    <div class="sdr-bloat panel panel-containing-children" hidden>
+      <img src="sdr_bloat/ahmet-yuksek-zSiqe6j9Aao-unsplash.jpg" />
+    </div>
+
+    <div id="NativePanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label">
+        <span>Native</span>
+        <span class="warning-native">Limited/simulated headroom NOT TAKEN INTO ACCOUNT</span>
+      </div>
+      <video id="MyVideo" hidden></video>
+      <img id="MyImage" hidden />
+      <button class="save-native-button save-button" title="Save original file">
+        ⬇️
+      </button>
+    </div>
+
+    <div id="SdrPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label">
+        <span>Canvas SDR</span>
+        <span class="warning-sim">Simulated headroom NOT TAKEN INTO ACCOUNT</span>
+      </div>
+      <div id="SdrPreviewContainer" class="canvas-container"></div>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="sdr"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+    </div>
+
+    <div id="AgtmPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label">
+        <span> 2094-50&nbsp; </span>
+      </div>
+      <div id="AgtmPreviewContainer" class="canvas-container"></div>
+      <div class="save-dropdown">
+        <button class="save-dropdown-trigger" id="SaveAgtmDropdownButton">⬇️</button>
+        <div class="save-dropdown-content">
+          <button class="save-canvas-button" data-panel-hash-name="agtm">Save canvas as PNG</button>
+          <button id="SaveStaticAgtmButton" class="save-agtm-button">
+            Save video with static 2094-50 metadata
+          </button>
+          <button id="SaveDynamicAgtmButton" class="save-agtm-button">
+            Save video with dynamic 2094-50 metadata
+          </button>
+          <button id="CancelDynamicAgtmButton" class="save-agtm-button" hidden>
+            Cancel export
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="AgtmLutPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label">
+        <span>
+          2094-50 (3D LUT)&nbsp;
+        </span>
+        <label for="AgtmLutType">
+          LUT type
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Select the type of 3D LUT to use:
+              <ul>
+                <li>
+                  <b>1D LUT only</b>: A 1D LUT is used to tone map each channel
+                  independently (grayscale tone mapping).
+                </li>
+                <li>
+                  <b>3D LUT only</b>: A 3D LUT is used directly to perform tone mapping.
+                </li>
+                <li>
+                  <b>1D GrayTM + 3D LUT</b>: A 1D LUT is used to tone map each channel
+                  independently (grayscale tone mapping), then a 3D LUT is applied to adjust the
+                  output.
+                </li>
+                <li>
+                  <b>1D GrayTM/Affine + 3D LUT (Recommended)</b>: A 1D LUT is used to apply a
+                  function to each channel independently. This function is the grayscale tone
+                  mapping function for the low brightness range, and a simple affine function in
+                  the brighter range. Then a 3D LUT is applied to adjust the output.
+                </li>
+                <li>
+                  <b>1D PQ + 3D LUT</b>: A 1D LUT is used to apply the PQ transfer function, then a
+                  3D LUT is applied to perform tone mapping.
+                </li>
+              </ul>
+            </span>
+          </span>
+          <select name="AgtmLutType" id="AgtmLutType" style="width: 80px">
+            <option value="1donly">1D LUT only</option>
+            <option value="3donly">3D LUT only</option>
+            <option value="gray">1D GrayTM + 3D LUT</option>
+            <option value="grayaff" selected>1D GrayTM/Affine + 3D LUT (Recommended)</option>
+            <option value="pq">1D PQ + 3D LUT</option>
+          </select>
+        </label>
+        <label for="AgtmSamplingType">
+          Sampling
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              The sampling type determines the input of the 1D LUT:
+              <ul>
+                <li><b>RGB</b>: Samples RGB values directly. <code>r_out = LUT(r) * r</code></li>
+                <li>
+                  <b>Max RGB</b>: Samples based on max(R,G,B).
+                  <code>r_out = LUT(max(r, g, b)) * r</code>
+                </li>
+                <li>
+                  <b>CIE Y</b>: Samples based on CIE Y luminance.
+                  <code>r_out = LUT(kr * r + kg * g + kb * b) * r</code>
+                </li>
+              </ul>
+            </span>
+          </span>
+          <select name="AgtmSamplingType" id="AgtmSamplingType" style="width: 80px">
+            <option value="rgb" selected>RGB</option>
+            <option value="maxrgb">Max RGB</option>
+            <option value="ciey">CIE Y</option>
+          </select>
+        </label>
+        <label for="AgtmLutInputColorSpace">
+          Input space
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Colorspace in which the LUTs are applied. Output colorspace remains the same as
+              input.
+            </span>
+          </span>
+          <select
+            name="AgtmLutInputColorSpace"
+            id="AgtmLutInputColorSpace"
+            style="width: 80px"
+          >
+            <option value="content" selected>Content</option>
+            <option value="gain">Gain space</option>
+            <option value="p3">P3</option>
+          </select>
+        </label>
+        <label for="Agtm1dLutSize">
+          1D LUT size
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text"> Size of the 1D LUT to use for tone mapping. </span>
+          </span>
+          <input
+            id="Agtm1dLutSize"
+            type="number"
+            min="2"
+            max="8192"
+            step="1"
+            value="4096"
+            style="width: 60px"
+          />
+        </label>
+        <label for="AgtmLutSize">
+          3D LUT size
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Size of the 3D LUT to use for tone mapping.<br />
+              When LUT rendering is enabled, first a large 1D LUT is applied to each channel
+              independently, then a 3D LUT of size NxNxN is used on the output of the 1D LUT. LUT
+              rendering is less exact, especially for small sizes, and it used to simulate some
+              types of hardware rendering.
+            </span>
+          </span>
+          <input
+            id="AgtmLutSize"
+            type="number"
+            min="2"
+            max="65"
+            step="1"
+            value="9"
+            style="width: 50px"
+          />
+        </label>
+      </div>
+      <div id="AgtmLutPreviewContainer" class="canvas-container"></div>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="agtm_lut"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+    </div>
+
+    <div id="Hdr10plusPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label"><span>HDR10+</span></div>
+      <div id="Hdr10PlusPreviewContainer" class="canvas-container"></div>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="hdr10plus"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+    </div>
+
+
+
+    <div id="HdrPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label"><span>HDR</span></div>
+      <div id="HdrPreviewContainer" class="canvas-container"></div>
+      <button class="save-canvas-button save-button" data-panel-hash-name="hdr" title="Save canvas to file">
+        ⬇️
+      </button>
+    </div>
+
+    <div id="LumaPanel" class="panel panel-containing-children renderer-panel" hidden>
+      <div class="panel-label">
+        <span>Luma</span>
+        <select id="LumaMode">
+          <option value="luma" selected>Luma</option>
+          <option value="maxrgb">MaxRGB</option>
+          <option value="r">R</option>
+          <option value="g">G</option>
+          <option value="b">B</option>
+          <option value="agtmr">Mix R</option>
+          <option value="agtmg">Mix G</option>
+          <option value="agtmb">Mix B</option>
+        </select>
+      </div>
+      <div id="LumaPreviewContainer" class="canvas-container"></div>
+      <button class="save-canvas-button save-button" data-panel-hash-name="luma" title="Save canvas to file">
+        ⬇️
+      </button>
+    </div>
+
+    <div class="sdr-bloat panel panel-containing-children" hidden>
+      <img src="sdr_bloat/alin-gavriliuc-LNZzU8645hE-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat panel panel-containing-children" hidden>
+      <img src="sdr_bloat/mariola-grobelska-HBwYM9NVYj8-unsplash.jpg" />
+    </div>
+
+    <div id="CurvesPanel" class="panel panel-containing-children" hidden>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="curves"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+      <div id="CurveEditorCanvasContainer" class="canvas-container"></div>
+      <p>
+        <label for="AltrIndex">
+          Editor Altr <input id="AltrIndex" type="number" min="0" max="3" step="1" value="0" />
+        </label>
+
+        <label for="ShowGainCurve">
+          Show gain curve
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Display the gain curve instead of the tone mapping curve.<br />
+              gain(x) = log2(tone_map(x) / x)
+            </span>
+          </span>
+          <input type="checkbox" id="ShowGainCurve" />
+        </label>
+        <label for="ShowControlPoints">
+          Show control points
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Display the control points of the curves.
+            </span>
+          </span>
+          <input type="checkbox" id="ShowControlPoints" checked />
+        </label>
+      </p>
+      <p>
+        Right click on a point to delete it. Hold shift to change slope. Hold alt to change y only.
+      </p>
+      <p>
+        <label for="HdrReferenceWhiteSlider">
+          Ref White
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              HDR Reference White. The luminance of diffuse white in the scene. Affects the overall
+              brightness of the image.
+            </span>
+          </span>
+          <input
+            id="HdrReferenceWhiteSlider"
+            type="range"
+            min="25"
+            max="2000"
+            step="1"
+            value="203"
+          />
+          <span id="HdrReferenceWhiteValue">100</span>
+          <button id="ResetHdrReferenceWhiteButton" title="Reset to default value" hidden>
+            &#x21BA;
+          </button>
+        </label>
+        <br />
+        <label for="BaselineHeadroomLinearSlider">
+          Max Headroom
+          <span class="tooltip">
+            <span class="tooltip-trigger">?</span>
+            <span class="tooltip-text">
+              Maximum headroom (linear). The maximum luminance of any component in the image. Affects
+              contrast and clipping of highlights.
+            </span>
+          </span>
+          <input
+            id="BaselineHeadroomLinearSlider"
+            type="range"
+            min="1"
+            max="64"
+            step="0.01"
+            value="4"
+          />
+          <span id="BaselineHeadroomLinearValue">4.00</span>
+          <button id="ResetBaselineHeadroomLinearButton" title="Reset to default value" hidden>
+            &#x21BA;
+          </button>
+        </label>
+        <br />
+        <label for="GainApplicationSpacePrimariesSelect">
+          Gain Application Space Primaries
+          <select
+            name="GainApplicationSpacePrimariesSelect"
+            id="GainApplicationSpacePrimariesSelect"
+          >
+            <option value="1">sRGB</option>
+            <option value="12">P3</option>
+            <option value="9" selected>ITU-R BT.2020</option>
+            <option value="-1">Custom</option>
+          </select>
+          <button
+            id="ResetGainApplicationSpacePrimariesButton"
+            title="Reset to default value"
+            hidden
+          >
+            &#x21BA;
+          </button>
+        </label>
+      </p>
+      <p id="CurveEditorPixelInfo" style="white-space: pre-wrap"></p>
+      <p>
+        <button id="ResetAllButton" hidden>Reset All Overrides</button>
+      </p>
+    </div>
+
+    <div id="Hdr10pcurvesPanel" class="panel panel-containing-children" hidden>
+      <div class="panel-label"><span>HDR10+ Curves</span></div>
+      <div id="Hdr10PlusCurvesPreviewContainer" class="canvas-container"></div>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="hdr10pcurves"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+    </div>
+
+    <div id="HdrcurvesPanel" class="panel panel-containing-children" hidden>
+      <div class="panel-label"><span>HDR Curves</span></div>
+      <div id="HdrCurvesPreviewContainer" class="canvas-container"></div>
+      <button
+        class="save-canvas-button save-button"
+        data-panel-hash-name="hdrcurves"
+        title="Save canvas to file"
+      >
+        ⬇️
+      </button>
+    </div>
+
+    <div id="StatsPanel" class="panel" hidden>
+      <p id="StatsModes">
+        <label for="StatsModeCDF">
+          CDF<input id="StatsModeCDF" type="radio" name="stats_mode" value="cdf" checked />
+        </label>
+        <label for="StatsModePercentile">
+          Percentile
+          <input id="StatsModePercentile" type="radio" name="stats_mode" value="percentile" />
+        </label>
+        <label for="StatsModeHistogram">
+          Histogram<input
+            id="StatsModeHistogram"
+            type="radio"
+            name="stats_mode"
+            value="histogram"
+          />
+        </label>
+        <label for="StatsLogNits">
+          Log nits axis
+          <input type="checkbox" id="StatsLogNits" />
+        </label>
+        <label for="StatsLogPercent">
+          Log percent axis
+          <input type="checkbox" id="StatsLogPercent" />
+        </label>
+      </p>
+      <div id="StatsCanvasContainer" class="canvas-container"></div>
+      <p id="SelectedPixelInfoContainer" style="white-space: pre-wrap">
+        Click on a rendered image to select a pixel and see its value.
+      </p>
+      <p id="StatsTextContainer" style="white-space: pre-wrap"></p>
+    </div>
+
+    <div id="JsonPanel" class="panel panel-containing-children" hidden>
+      <textarea style="flex-grow: 1; resize: none; border: none; font-family: monospace"></textarea>
+      <div class="save-dropdown">
+        <button class="save-dropdown-trigger" id="SaveJsonDropdownButton" title="Save 2094-50 JSON to file">⬇️</button>
+        <div class="save-dropdown-content">
+          <button class="save-json-button" id="SaveCurrentJsonButton">Save current frame JSON</button>
+          <button class="save-json-button" id="SaveCurrentBinaryAgtmButton">Save current frame binary blob</button>
+          <button class="save-json-button" id="SaveAllJsonButton">Save all frames JSON</button>
+          <button id="CancelDynamicJsonButton" hidden>Cancel export</button>
+        </div>
+      </div>
+    </div>
+
+    <textarea id="Smpte209440Panel" rows="100" class="panel" hidden></textarea>
+
+  </div>
+
+  <div class="sdr-bloat-parent" hidden>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/clay-banks-DsrHsPt3uFg-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/clay-banks-YFzqRFFyauw-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/eirik-skarstein-wP9RhbrgtTM-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/elliott-colburn-vr_in5tvlVE-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/kristaps-ungurs-ulDaqll-nRQ-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/micah-sammie-chaffin-4TU3ch5eL3c-unsplash.jpg" />
+    </div>
+    <div class="sdr-bloat">
+      <img src="sdr_bloat/sitraka-FrE71KMjIys-unsplash.jpg" />
+    </div>
+  </div>
+
+  <dialog id="MediaInfoDialog">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h2 style="margin: 0;">File Info</h2>
+      <button id="CloseMediaInfoDialog" title="Close">❌</button>
+    </div>
+    <pre id="MediaInfoText" style="white-space: pre-wrap; font-family: monospace; margin-top: 10px;"></pre>
+  </dialog>
+
+  <dialog id="PermissionDialog">
+    <div>
+      <p noalterbackground style="text-align: center;">
+        This application needs the "Window management" permission to read your screen's HDR
+        capabilities.
+      </p>
+      <div style="text-align: center;">
+        <button id="PermissionButton">Grant permission</button>
+      </div>
+      <div id="PermissionStep2" hidden style="text-align: center;">
+        <p id="PermissionError" noalterbackground>
+          Failed to get screen details.<br />
+          Try clicking on the site settings button to the left of the URL bar and enabling "Window
+          management" then refresh the page.<br />
+          You can still use the app without this permission, but HDR capabilities won't be detected.
+        </p>
+        <button id="ClosePermissionDialog">Close and continue</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="ContentBrowser" hidden>
+    <div id="ContentBrowserHeader">
+      <h2>Select content or drag and drop your own</h2>
+      <button id="CloseContentBrowser" title="Close">❌</button>
+    </div>
+    <div id="ContentGrid">
+      <!-- Thumbnails will be populated here by JavaScript -->
+    </div>
+  </div>
+
+  <script type="module" src="/app/main.ts"></script>
+
+</body>

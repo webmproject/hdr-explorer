@@ -1,0 +1,22 @@
+{
+  "name": "hdr-explorer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "safevalues": "^1.2.0",
+    "upng-js": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/estree": "^1.0.8",
+    "@types/json-schema": "^7.0.15",
+    "@types/upng-js": "^2.1.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  }
+}
