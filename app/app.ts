@@ -1393,9 +1393,9 @@ async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean
   renderVisiblePanels();
 
   // Signal that the app finished loading (useful for tests).
-  if (!(window as any)['hdrscopeReady']) {
-    (window as any)['hdrscopeReady'] = true;
-    window.dispatchEvent(new CustomEvent('hdrscope-ready'));
+  if (!(window as any)['appReady']) {
+    (window as any)['appReady'] = true;
+    window.dispatchEvent(new CustomEvent('app-ready'));
   }
 }
 
