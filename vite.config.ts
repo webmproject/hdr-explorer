@@ -19,4 +19,5 @@ import { resolve } from 'path';
 
 export default defineConfig({
   publicDir: 'data',
+  base: './',
 });
