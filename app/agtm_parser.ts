@@ -50,7 +50,8 @@ export function parseAgtm(stream: Bitstream): AgtmMetadata | null {
   if (minimumApplicationVersion === -1) return null;
   if (minimumApplicationVersion > kApplicationVersion) {
     console.warn(
-      `Application version ${applicationVersion} does not support minimum version ${minimumApplicationVersion}`,
+      `Version not supported: SMPTE ST 2094-50 minimum application version is ` +
+        `set to ${minimumApplicationVersion} but this parser only supports up to version ${kApplicationVersion}`,
     );
     return null;
   }
