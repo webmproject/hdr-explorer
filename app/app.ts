@@ -2944,12 +2944,15 @@ populateContentDropdown();
     const options = getLutOptions();
     getRenderer('agtm_lut', AgtmRenderer)?.setLutOptions(options);
     renderVisiblePanels();
+    // Set the hashes based on input element values directly, note the values in
+    // the LutOptions since some of them are overridden (e.g. LUT size forced
+    // to 0 for unused LUTs).
     setHashes({
-      'lut': options.lut3dSize.toString(),
-      'lut1d': options.lut1dSize.toString(),
-      'lut_type': options.lutType,
-      'lut1d_type': options.samplingType,
-      'lut_in_space': options.inputColorSpaceMode,
+      'lut': agtmLutSizeInputEl.value,
+      'lut1d': agtm1dLutSizeInputEl.value,
+      'lut_type': agtmLutTypeSelectEl.value,
+      'lut1d_type': agtmSamplingTypeSelectEl.value,
+      'lut_in_space': agtmLutInputColorSpaceSelectEl.value,
     });
   };
   agtmLutSizeInputEl.addEventListener('change', lutChangeHandler);

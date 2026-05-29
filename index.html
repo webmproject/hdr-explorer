@@ -340,9 +340,15 @@
         <span class="tooltip">
           <span class="tooltip-trigger">?</span>
           <span class="tooltip-text">
-            Renders the content using SMPTE ST 2094-50 metadata, using a 3D LUT and/or 1D LUT,
+            Renders the content using SMPTE ST 2094-50 metadata, using a 1D LUT and/or a 3D LUT,
             mimicking the Android LUT API. This is used to simulate hardware rendering. In general,
             LUT rendering is an approximation since interpolation is used.
+            <br />
+            The 1D LUT, if used, is applied first. It contains a gain value, and the gain lookup
+            depends on the 'Sampling' parameter (see its tooltip for details).
+            <br />
+            Then a 3D LUT of size NxNxN, if used, is applied to the output of the 1D LUT, or to the
+            input pixels if the 1D LUT is not used.
           </span>
         </span>
         <input type="checkbox" id="ToggleAgtmLut" />
@@ -585,7 +591,8 @@
           <span class="tooltip">
             <span class="tooltip-trigger">?</span>
             <span class="tooltip-text">
-              Select the type of 3D LUT to use:
+              Select the type of 3D LUT to use.
+              LUT rendering uses an optional 1D LUT followed by an optional 3D LUT.
               <ul>
                 <li>
                   <b>1D LUT only</b>: A 1D LUT is used to tone map each channel
@@ -606,9 +613,9 @@
                 </li>
                 <li>
                   <b>1D GrayTM/Affine + 3D LUT (Recommended)</b>: A 1D LUT is used to apply a
-                  function to each channel independently. This function is the grayscale tone
-                  mapping function for the low brightness range, and a simple affine function in
-                  the brighter range. Then a 3D LUT is applied to adjust the output.
+                  function that is the same as the grayscale tone mapping function for the low
+                  brightness range, and a simple affine function in the brighter range.
+                  Then a 3D LUT is applied to adjust the output.
                 </li>
                 <li>
                   <b>1D PQ + 3D LUT</b>: A 1D LUT is used to apply the PQ transfer function, then a
@@ -631,7 +638,8 @@
           <span class="tooltip">
             <span class="tooltip-trigger">?</span>
             <span class="tooltip-text">
-              The sampling type determines the input of the 1D LUT:
+              The sampling type determines the input of the 1D LUT. Ignored if the 1D LUT is not
+              used.
               <ul>
                 <li><b>RGB</b>: Samples RGB values directly. <code>r_out = LUT(r) * r</code></li>
                 <li>
@@ -646,8 +654,8 @@
             </span>
           </span>
           <select name="AgtmSamplingType" id="AgtmSamplingType" style="width: 80px">
-            <option value="rgb" selected>RGB</option>
-            <option value="maxrgb">Max RGB</option>
+            <option value="rgb">RGB</option>
+            <option value="maxrgb" selected>Max RGB</option>
             <option value="ciey">CIE Y</option>
           </select>
         </label>
@@ -674,7 +682,9 @@
           1D LUT size
           <span class="tooltip">
             <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text"> Size of the 1D LUT to use for tone mapping. </span>
+            <span class="tooltip-text">
+              Size of the 1D LUT to use for tone mapping. Ignored if a 1D LUT is not used.
+            </span>
           </span>
           <input
             id="Agtm1dLutSize"
@@ -691,11 +701,7 @@
           <span class="tooltip">
             <span class="tooltip-trigger">?</span>
             <span class="tooltip-text">
-              Size of the 3D LUT to use for tone mapping.<br />
-              When LUT rendering is enabled, first a large 1D LUT is applied to each channel
-              independently, then a 3D LUT of size NxNxN is used on the output of the 1D LUT. LUT
-              rendering is less exact, especially for small sizes, and it used to simulate some
-              types of hardware rendering.
+              Size of the 3D LUT to use for tone mapping. Ignored if a 3D LUT is not used.
             </span>
           </span>
           <input
