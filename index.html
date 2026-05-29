@@ -595,6 +595,11 @@
                   <b>3D LUT only</b>: A 3D LUT is used directly to perform tone mapping.
                 </li>
                 <li>
+                  <b>3D LUT only (gamma)</b>: A 3D LUT is used directly to perform tone mapping,
+                    but the input to the 3D LUT is in the original gamma-encoded space instead of
+                    the linear space used by the other options.
+                </li>
+                <li>
                   <b>1D GrayTM + 3D LUT</b>: A 1D LUT is used to tone map each channel
                   independently (grayscale tone mapping), then a 3D LUT is applied to adjust the
                   output.
@@ -615,6 +620,7 @@
           <select name="AgtmLutType" id="AgtmLutType" style="width: 80px">
             <option value="1donly">1D LUT only</option>
             <option value="3donly">3D LUT only</option>
+            <option value="3dgamma">3D LUT only (gamma)</option>
             <option value="gray">1D GrayTM + 3D LUT</option>
             <option value="grayaff" selected>1D GrayTM/Affine + 3D LUT (Recommended)</option>
             <option value="pq">1D PQ + 3D LUT</option>

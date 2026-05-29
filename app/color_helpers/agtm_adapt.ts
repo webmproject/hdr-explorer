@@ -408,7 +408,14 @@ export function sample3dTex3dTetrahedral(
 type ToLut1dFunc = (sdrRelative: number) => number;
 
 /** Type of 1D/3D LUT to generate. */
-export type LutType = 'gray' | 'grayaff' | 'pq' | '3donly' | '1donly' | 'nolut';
+export type LutType =
+  | 'gray'
+  | 'grayaff'
+  | 'pq'
+  | '3donly'
+  | '3dgamma'
+  | '1donly'
+  | 'nolut';
 /**
  * Input space for the LUT. Corresponds to the "sampling key" type in the
  * Android API.
@@ -625,6 +632,7 @@ function getToLut1dFunc(
     case 'pq':
       return (sdrRelative) => toPq(sdrRelative, metadata);
     case '3donly':
+    case '3dgamma':
     case 'nolut':
     default:
       return null;
@@ -731,7 +739,13 @@ export function generate3dLut(
             );
           }
         } else {
-          rgbUnitized = unitized; // No 1D LUT.
+          if (options.lutType === '3dgamma') {
+            rgbUnitized = unitized.map((u) =>
+              transferToLinear(u, contentTransfer),
+            );
+          } else {
+            rgbUnitized = unitized; // No 1D LUT.
+          }
         }
 
         if (contentTransfer === kTransferHLG) {
@@ -823,7 +837,13 @@ export function agtmToneMapWithLut(
 
   let after1dLut: number[];
   if (!lut1d || lut1d.length <= 1) {
-    after1dLut = rgbUnitized;
+    if (options.lutType === '3dgamma') {
+      after1dLut = rgbUnitized.map((c) =>
+        transferFromLinear(c, contentTransfer),
+      );
+    } else {
+      after1dLut = rgbUnitized;
+    }
   } else if (options.samplingType === 'maxrgb') {
     const gain = sampleLut1dGain(Math.max(...rgbUnitized));
     after1dLut = rgbUnitized.map((c) => c * gain);

@@ -90,6 +90,7 @@ export const kAgtmToneMapperGlsl = `
   uniform float lut_output_max;
   uniform int sampling_type; // 0=rgb, 1=maxrgb, 2=ciey
   uniform int lut_input_color_space_mode; // 0=gain, 1=content, 2=p3
+  uniform bool lut3d_gamma_input;
 
   vec3 ConvertToLutInputSpace(vec3 rgb, int input_color_primaries) {
     if (lut_input_color_space_mode == 0) { // gain
@@ -280,6 +281,9 @@ export const kAgtmToneMapperGlsl = `
         }
       } else {
         after_1d_lut = rgb / lut_input_max;
+        if (lut3d_gamma_input) {
+          after_1d_lut = ApplyOetf(after_1d_lut, texture_trfn);
+        }
       }
 
       if (lut3d_size > 1.0) {
@@ -532,6 +536,10 @@ export class AgtmToneMapper {
     );
     gl.uniform1f(gl.getUniformLocation(p, 'lut1d_size'), lutOptions.lut1dSize);
     gl.uniform1f(gl.getUniformLocation(p, 'lut3d_size'), lutOptions.lut3dSize);
+    gl.uniform1i(
+      gl.getUniformLocation(p, 'lut3d_gamma_input'),
+      lutOptions.lutType === '3dgamma' ? 1 : 0,
+    );
 
     let samplingTypeInt = 0;
     if (lutOptions.samplingType === 'maxrgb') {

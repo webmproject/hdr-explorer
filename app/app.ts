@@ -101,7 +101,9 @@ function getLutOptions(): LutOptions {
     agtmLutInputColorSpaceSelectEl.value as LutInputColorSpaceMode;
   const lut3dSize = lutType === '1donly' ? 0 : Number(agtmLutSizeInputEl.value);
   const lut1dSize =
-    lutType === '3donly' ? 0 : Number(agtm1dLutSizeInputEl.value);
+    lutType === '3donly' || lutType === '3dgamma'
+      ? 0
+      : Number(agtm1dLutSizeInputEl.value);
   return {
     lut1dSize,
     lut3dSize,
