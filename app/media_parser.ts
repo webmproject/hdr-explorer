@@ -218,6 +218,8 @@ interface HdrMetadataForTrack {
   colourPrimaries?: number;
   transferCharacteristics?: number;
   matrixCoefficients?: number;
+  // Existing metadata that was overridden by this metadata.
+  overridenMetadata?: HdrMetadataForTrack;
 }
 
 interface MetadataHdrCll {
@@ -338,7 +340,6 @@ export function getFirstVideoTrack(tracks: {
 }): Track | undefined {
   return Object.values(tracks).find((t) => t.handlerType === 'vide');
 }
-
 
 function parseHdr10p(stream: Bitstream): Hdr10pMetadata | null {
   const data: Partial<Hdr10pMetadata> = {};
@@ -866,9 +867,23 @@ class MP4Parser {
 
     this.gatherSamples();
 
+    // Parse metadata from lowest to highest priority:
+    // - metadata in video bitstream
+    // - metadata in metadata tracks
+    // Later metadata will override earlier metadata if any.
     for (const trackId in this.tracks) {
       if (!Object.prototype.hasOwnProperty.call(this.tracks, trackId)) continue;
-      this.parseTrackSamples(this.tracks[trackId]);
+      // Video tracks.
+      if (this.tracks[trackId].handlerType === 'vide') {
+        this.parseTrackSamples(this.tracks[trackId]);
+      }
+    }
+    for (const trackId in this.tracks) {
+      if (!Object.prototype.hasOwnProperty.call(this.tracks, trackId)) continue;
+      // Non-video tracks.
+      if (this.tracks[trackId].handlerType !== 'vide') {
+        this.parseTrackSamples(this.tracks[trackId]);
+      }
     }
 
     // Sort HDR metadata frames by presentation time.
@@ -890,22 +905,35 @@ class MP4Parser {
     return this.boxes;
   }
 
+  /**
+   * Returns the HdrMetadataForTrack for the given video track ID and type.
+   * `metadataSourceTrackId` specifies the ID of the track that contains the
+   * metadata, and is assumed to be the same as `videoTrackId` if not provided.
+   * If a HdrMetadataForTrack does not exist yet for this video track ID and
+   * type, it is created and returned.
+   * If it does exist but has a different source track ID, a new
+   * HdrMetadataForTrack is created to override the previous metadata,
+   * keeping a reference to the previous metadata in `overriddenMetadata`.
+   */
   getOrAddHdrMetadata(
-    trackId: number,
+    videoTrackId: number,
     type: HdrMetadataType,
-    sourceTrackId?: number,
+    metadataSourceTrackId?: number,
   ): HdrMetadataForTrack {
-    if (!this.hdrMetadata[trackId]) {
-      this.hdrMetadata[trackId] = {};
+    if (!this.hdrMetadata[videoTrackId]) {
+      this.hdrMetadata[videoTrackId] = {};
     }
-    if (!this.hdrMetadata[trackId][type]) {
-      this.hdrMetadata[trackId][type] = {
+    const sourceTrackId = metadataSourceTrackId ?? videoTrackId;
+    const existing = this.hdrMetadata[videoTrackId][type];
+    if (!existing || sourceTrackId !== existing.sourceTrackId) {
+      this.hdrMetadata[videoTrackId][type] = {
         name: type,
         frames: [],
-        sourceTrackId: sourceTrackId ?? trackId,
+        sourceTrackId,
+        overridenMetadata: existing,
       };
     }
-    return this.hdrMetadata[trackId][type];
+    return this.hdrMetadata[videoTrackId][type];
   }
 
   private gatherSamples(): void {
@@ -1445,7 +1473,6 @@ class MP4Parser {
     }
   }
 }
-
 
 class AV1OBUParser {
   private readonly OBU_TYPE_NAMES: {[key: number]: string} = {
