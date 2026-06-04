@@ -32,7 +32,7 @@ import {ScreenDetailed} from './global_interfaces';
 import {averageStats, ComputedStats, ImageStats} from './image_stats';
 import {jsonToMetadata, metadataListToJson, metadataToJson} from './json';
 import {createImageBitmapSource, DecodedMedia, decodeMediaWithCallback, getMediaInfoString} from './load_media';
-import {findTrackSampleIndexForTime, getAverageFramerate, getFirstVideoTrack, parseMp4,} from './media_parser';
+import {findTrackSampleIndexForTime, getAverageFramerate, getFirstVideoTrack} from './media_parser';
 import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
@@ -791,6 +791,16 @@ async function setAgtmMetadata(
   hdrReferenceWhite?: number,
   baselineHeadroomLinear?: number,
 ) {
+  if (hdrReferenceWhiteOverridden && hdrReferenceWhite === undefined) {
+    hdrReferenceWhite = Number(hdrReferenceWhiteSliderEl.value);
+  }
+  if (
+    baselineHeadroomLinearOverridden &&
+    baselineHeadroomLinear === undefined
+  ) {
+    baselineHeadroomLinear = Number(baselineHeadroomSliderEl.value);
+  }
+
   // If dynamic metadata is enabled and is already computed, use that.
   if (
     dynamicAgtmEl.value === 'all' &&
@@ -827,23 +837,24 @@ async function setAgtmMetadata(
       }
     }
     agtmMetadata = structuredClone(bestMeta ?? kDefaultMetadata);
+    if (hdrReferenceWhite !== undefined) {
+      agtmMetadata.hdr_reference_white = hdrReferenceWhite;
+    }
+    if (baselineHeadroomLinear !== undefined) {
+      agtmMetadata.baseline_hdr_headroom =
+        baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
+    }
     originalAgtmMetadata = structuredClone(agtmMetadata);
     if (bestStats) {
       setStats(bestStats);
     }
+    if (gainApplicationSpacePrimariesOverridden) {
+      applyGainApplicationSpacePrimaries(agtmMetadata);
+    }
+    setComponentMixFunction();
+
     onMetadataChanged();
     return;
-  }
-
-
-  if (hdrReferenceWhiteOverridden && hdrReferenceWhite === undefined) {
-    hdrReferenceWhite = Number(hdrReferenceWhiteSliderEl.value);
-  }
-  if (
-    baselineHeadroomLinearOverridden &&
-    baselineHeadroomLinear === undefined
-  ) {
-    baselineHeadroomLinear = Number(baselineHeadroomSliderEl.value);
   }
 
   const newAgtmMetadata = await getAgtmForType(
@@ -2075,18 +2086,14 @@ async function generateDynamicMetadata(
     time: number,
   ) => void,
 ): Promise<Array<AgtmMetadata | null> | null> {
-  if (!decodedMedia?.arrayBuffer || !mediaBlob) {
-    return null;
-  }
-  const mp4Info = parseMp4(decodedMedia.arrayBuffer);
-  if (!mp4Info) {
-    console.error('Failed to parse MP4 for dynamic AGTM.');
+  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMp4) {
     return null;
   }
   const kMaxFramesToProcess = 1000;
   const metadataList: Array<AgtmMetadata | null> = [];
 
-  const videoTrack = getFirstVideoTrack(mp4Info.tracks);
+  const parsedMp4 = decodedMedia.parsedMp4;
+  const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
   if (!videoTrack || !videoTrack.timescale) {
     console.error('No video track with timescale found');
     return null;
@@ -2142,7 +2149,7 @@ async function generateDynamicMetadata(
         const kDefaultFramerate = 25;
         // Weight applied for a framerate of kDefaultFramerate.
         const kDefaultWeight = 0.125;
-        const framerate = getAverageFramerate(mp4Info) ?? kDefaultFramerate;
+        const framerate = getAverageFramerate(parsedMp4) ?? kDefaultFramerate;
         const weight = Math.min(
           kDefaultWeight * (kDefaultFramerate / framerate),
           1.0,
@@ -3102,6 +3109,7 @@ populateContentDropdown();
     unsetHash('ref_white');
     await setAgtmMetadata();
     renderVisiblePanels();
+    requestRestartDynamicAgtm();
   });
   hdrReferenceWhiteSliderEl.addEventListener('input', async (e) => {
     hdrReferenceWhiteOverridden = true;
@@ -3109,12 +3117,14 @@ populateContentDropdown();
     setHash('ref_white', value.toString());
     await setAgtmMetadata(value);
     renderVisiblePanels();
+    requestRestartDynamicAgtm();
   });
   resetBaselineHeadroomLinearButtonEl.addEventListener('click', async () => {
     baselineHeadroomLinearOverridden = false;
     unsetHash('max_comp');
     await setAgtmMetadata();
     renderVisiblePanels();
+    requestRestartDynamicAgtm();
   });
   baselineHeadroomSliderEl.addEventListener('input', async (e) => {
     baselineHeadroomLinearOverridden = true;
