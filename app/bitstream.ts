@@ -283,6 +283,25 @@ export class DataStream {
     }
   }
 
+  readFloat32(): number {
+    const v = this.view.getFloat32(this.offset, false);
+    this.offset += 4;
+    return v;
+  }
+  writeFloat32(v: number): void {
+    this.view.setFloat32(this.offset, v, false);
+    this.offset += 4;
+  }
+  readFloat64(): number {
+    const v = this.view.getFloat64(this.offset, false);
+    this.offset += 8;
+    return v;
+  }
+  writeFloat64(v: number): void {
+    this.view.setFloat64(this.offset, v, false);
+    this.offset += 8;
+  }
+
   readNullTerminatedString(): string {
     let str = '';
     while (this.remaining > 0) {

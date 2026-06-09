@@ -19,7 +19,7 @@ import {objectUrlFromSafeSource} from 'safevalues/dom';
 import {AgtmMetadata} from './color_helpers/agtm';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {getAgtmFromIcc, getIccFromPng} from './icc';
-import {getAgtmMetadata, getCicp, getSmpte209440Metadata, ParsedMp4, parseMp4, getFirstVideoTrack} from './media_parser';
+import {getAgtmMetadata, getCicp, getSmpte209440Metadata, ParsedMedia, parseMp4, parseWebm, getFirstVideoTrack} from './media_parser';
 
 interface MediaMetadata {
   transferCharacteristics: number;
@@ -36,7 +36,7 @@ export interface DecodedMedia {
   imageBitmapSource: HTMLImageElement | HTMLVideoElement;
   metadata: MediaMetadata | null;
   arrayBuffer: ArrayBuffer | null;
-  parsedMp4: ParsedMp4 | null;
+  parsedMedia: ParsedMedia | null;
 }
 
 export async function createImageBitmapSource(
@@ -50,7 +50,7 @@ async function onImageBitmapSource(
   source: HTMLImageElement | HTMLVideoElement,
   metadata: MediaMetadata | null,
   arrayBuffer: ArrayBuffer | null,
-  parsedMp4: ParsedMp4 | null,
+  parsedMedia: ParsedMedia | null,
   decodedMediaCallback: (media: DecodedMedia) => void,
 ) {
   const options: ImageBitmapOptions = {colorSpaceConversion: 'none'};
@@ -62,7 +62,7 @@ async function onImageBitmapSource(
     imageBitmap,
     metadata,
     type,
-    parsedMp4,
+    parsedMedia,
   });
 }
 
@@ -71,7 +71,7 @@ const videoFrameCallbackHandles = new WeakMap<HTMLVideoElement, number>();
 function videoOnFrameCallback(
   videoEl: HTMLVideoElement,
   isVideoElOwnedByCaller: boolean,
-  parsedMp4: ParsedMp4 | null,
+  parsedMedia: ParsedMedia | null,
   arrayBuffer: ArrayBuffer | null,
   decodedMediaCallback: (media: DecodedMedia) => void,
 ) {
@@ -83,7 +83,7 @@ function videoOnFrameCallback(
       videoOnFrameCallback(
         videoEl,
         isVideoElOwnedByCaller,
-        parsedMp4,
+        parsedMedia,
         arrayBuffer,
         decodedMediaCallback,
       ),
@@ -91,14 +91,14 @@ function videoOnFrameCallback(
     if (isVideoElOwnedByCaller) {
       videoFrameCallbackHandles.set(videoEl, handle);
     }
-    const metadata = parsedMp4
-      ? readMetadata(parsedMp4, videoEl.currentTime)
+    const metadata = parsedMedia
+      ? readMetadata(parsedMedia, videoEl.currentTime)
       : null;
     await onImageBitmapSource(
       videoEl,
       metadata,
       arrayBuffer,
-      parsedMp4,
+      parsedMedia,
       decodedMediaCallback,
     );
   };
@@ -133,7 +133,7 @@ function loadImage(
   });
 }
 
-function readMetadata(parsedMp4: ParsedMp4, videoTime: number): MediaMetadata {
+function readMetadata(parsedMedia: ParsedMedia, videoTime: number): MediaMetadata {
   const metadata: MediaMetadata = {
     transferCharacteristics: 0,
     colourPrimaries: 0,
@@ -142,13 +142,13 @@ function readMetadata(parsedMp4: ParsedMp4, videoTime: number): MediaMetadata {
     agtmMetadata: null,
     agtmMetadataText: null,
   };
-  const cicp = getCicp(parsedMp4);
+  const cicp = getCicp(parsedMedia);
   if (cicp) {
     metadata.transferCharacteristics = cicp.transferCharacteristics ?? 0;
     metadata.colourPrimaries = cicp.colourPrimaries ?? 0;
   }
-  const hdr10pMetadata = getSmpte209440Metadata(parsedMp4, videoTime);
-  const agtmMetadata = getAgtmMetadata(parsedMp4, videoTime);
+  const hdr10pMetadata = getSmpte209440Metadata(parsedMedia, videoTime);
+  const agtmMetadata = getAgtmMetadata(parsedMedia, videoTime);
   metadata.hdr10pMetadataText = JSON.stringify(hdr10pMetadata, null, 2);
   if (typeof hdr10pMetadata !== 'string') {
     metadata.hdr10pMetadata = hdr10pMetadata;
@@ -205,14 +205,16 @@ export async function decodeMediaWithCallback(
     fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
   }
 
-  const parsedMp4 = fileArrayBuffer ? parseMp4(fileArrayBuffer) : null;
-  if (parsedMp4) {
-    console.debug('Parsed MP4:', parsedMp4);
+  const parsedMedia = fileArrayBuffer
+    ? (extension === 'webm' ? parseWebm(fileArrayBuffer) : parseMp4(fileArrayBuffer))
+    : null;
+  if (parsedMedia) {
+    console.debug('Parsed Video:', parsedMedia);
   }
 
   if (isImage) {
     const myImageEl = await loadImage(url, imageEl);
-    let metadata = parsedMp4 ? readMetadata(parsedMp4, 0) : null;
+    let metadata = parsedMedia ? readMetadata(parsedMedia, 0) : null;
     if (
       extension === 'jpg' ||
       extension === 'jpeg' ||
@@ -242,7 +244,7 @@ export async function decodeMediaWithCallback(
       myImageEl,
       metadata,
       fileArrayBuffer,
-      parsedMp4,
+      parsedMedia,
       decodedMediaCallback,
     );
   } else {
@@ -255,7 +257,7 @@ export async function decodeMediaWithCallback(
       videoOnFrameCallback(
         myVideoEl,
         isVideoElOwnedByCaller,
-        parsedMp4,
+        parsedMedia,
         fileArrayBuffer,
         decodedMediaCallback,
       ),
@@ -285,7 +287,7 @@ export async function decodeMedia(
   });
 }
 
-function getCarriage(parsed: ParsedMp4, sourceTrackId: number): string {
+function getCarriage(parsed: ParsedMedia, sourceTrackId: number): string {
   const sourceTrack = parsed.tracks[sourceTrackId];
   if (sourceTrack) {
     if (sourceTrack.handlerType === 'vide') {
@@ -300,7 +302,7 @@ function getCarriage(parsed: ParsedMp4, sourceTrackId: number): string {
 export function getMediaInfoString(media: DecodedMedia): string {
   let info = '';
 
-  if (!media.parsedMp4) {
+  if (!media.parsedMedia) {
     if (media.type === 'image') {
       info += 'Image File.\n';
       if (media.metadata) {
@@ -318,12 +320,13 @@ export function getMediaInfoString(media: DecodedMedia): string {
         }
       }
     } else {
-      info += 'No parsed MP4 info available.';
+      info += 'No parsed media info available.';
     }
     return info;
   }
-  const parsed = media.parsedMp4;
+  const parsed = media.parsedMedia;
 
+  info += `Container: ${parsed.containerType}\n`;
   const videoTrack = getFirstVideoTrack(parsed.tracks);
   if (videoTrack) {
     info += `Video Codec: ${videoTrack.codec}\n`;

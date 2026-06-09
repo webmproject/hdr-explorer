@@ -28,6 +28,7 @@ ts_library(
         "json.ts",
         "load_media.ts",
         "media_parser.ts",
+        "webm.ts",
     ],
     deps = [
         ":agtm_metadata_types",

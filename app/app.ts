@@ -733,8 +733,8 @@ async function getAgtmForType(
   } else if (type === 'custom') {
     if (customAgtmMetadataArray) {
       let bestMeta: AgtmMetadata | null = null;
-      if (decodedMedia?.type === 'video' && decodedMedia.parsedMp4) {
-        const videoTrack = getFirstVideoTrack(decodedMedia.parsedMp4.tracks);
+      if (decodedMedia?.type === 'video' && decodedMedia.parsedMedia) {
+        const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
         let frameIdx = 0;
         if (videoTrack) {
           frameIdx =
@@ -809,8 +809,8 @@ async function setAgtmMetadata(
   ) {
     let bestMeta: AgtmMetadata | null = null;
     let bestStats: ComputedStats | null = null;
-    if (decodedMedia?.parsedMp4) {
-      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMp4.tracks);
+    if (decodedMedia?.parsedMedia) {
+      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
       let frameIdx = 0;
       if (videoTrack) {
         frameIdx =
@@ -1047,22 +1047,24 @@ function onMetadataChanged() {
 function updateSaveAgtmButtons() {
   const isVideo = decodedMedia?.type === 'video';
   const isFromFile = agtmMetadataType === 'fromfile';
+  const isWebm = decodedMedia?.parsedMedia?.containerType === 'webm';
+
+  let saveDisabled = false;
+  let title = '';
   if (!isVideo) {
-    saveStaticAgtmButtonEl.disabled = true;
-    saveStaticAgtmButtonEl.title = 'Video only';
-    saveDynamicAgtmButtonEl.disabled = true;
-    saveDynamicAgtmButtonEl.title = 'Video only';
+    saveDisabled = true;
+    title = 'Video only';
   } else if (isFromFile) {
-    saveStaticAgtmButtonEl.disabled = true;
-    saveStaticAgtmButtonEl.title = "'from file' not supported";
-    saveDynamicAgtmButtonEl.disabled = true;
-    saveDynamicAgtmButtonEl.title = "'from file' not supported";
-  } else {
-    saveStaticAgtmButtonEl.disabled = false;
-    saveStaticAgtmButtonEl.title = '';
-    saveDynamicAgtmButtonEl.disabled = false;
-    saveDynamicAgtmButtonEl.title = '';
+    saveDisabled = true;
+    title = 'must choose a different metadata type';
+  } else if (isWebm) {
+    saveDisabled = true;
+    title = 'WebM muxing not supported';
   }
+  saveStaticAgtmButtonEl.disabled = saveDisabled;
+  saveStaticAgtmButtonEl.title = title;
+  saveDynamicAgtmButtonEl.disabled = saveDisabled;
+  saveDynamicAgtmButtonEl.title = title;
 
   const hasDynamicMetadata =
     dynamicAgtmMetadata !== null ||
@@ -1078,11 +1080,11 @@ function updateSaveAgtmButtons() {
 }
 
 function getEmbeddedAgtmMetadataList(): Array<AgtmMetadata | null> | null {
-  if (!decodedMedia?.parsedMp4) return null;
-  const videoTrack = getFirstVideoTrack(decodedMedia.parsedMp4.tracks);
+  if (!decodedMedia?.parsedMedia) return null;
+  const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
   if (!videoTrack) return null;
   const trackMetadata =
-    decodedMedia.parsedMp4.hdrMetadata[videoTrack.id]?.['AGTM'];
+    decodedMedia.parsedMedia.hdrMetadata[videoTrack.id]?.['AGTM'];
   if (!trackMetadata || !trackMetadata.frames) return null;
 
   // Create a dense array of metadata for all frames.
@@ -1114,11 +1116,11 @@ function getEmbeddedAgtmMetadataList(): Array<AgtmMetadata | null> | null {
 }
 
 function hasEmbeddedAgtmMetadata(): boolean {
-  if (!decodedMedia?.parsedMp4) return false;
-  const videoTrack = getFirstVideoTrack(decodedMedia.parsedMp4.tracks);
+  if (!decodedMedia?.parsedMedia) return false;
+  const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
   if (!videoTrack) return false;
   const trackMetadata =
-    decodedMedia.parsedMp4.hdrMetadata[videoTrack.id]?.['AGTM'];
+    decodedMedia.parsedMedia.hdrMetadata[videoTrack.id]?.['AGTM'];
   return (trackMetadata?.frames?.length ?? 0) > 0;
 }
 
@@ -1922,7 +1924,7 @@ function populateContentBrowser() {
       const dataDirIdx = pathParts.indexOf('data');
       pathParts.splice(dataDirIdx + 1, 0, 'preview');
       const previewPath = pathParts.join('/') + '.webp';
-        
+
       const title = file.title;
       const isVideo = basename.endsWith('.mp4');
 
@@ -2086,13 +2088,13 @@ async function generateDynamicMetadata(
     time: number,
   ) => void,
 ): Promise<Array<AgtmMetadata | null> | null> {
-  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMp4) {
+  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMedia) {
     return null;
   }
   const kMaxFramesToProcess = 1000;
   const metadataList: Array<AgtmMetadata | null> = [];
 
-  const parsedMp4 = decodedMedia.parsedMp4;
+  const parsedMp4 = decodedMedia.parsedMedia;
   const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
   if (!videoTrack || !videoTrack.timescale) {
     console.error('No video track with timescale found');

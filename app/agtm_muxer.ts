@@ -362,8 +362,8 @@ export function muxAgtmMetadata(
     return null;
   }
 
-  const videoTrackMdhdBox = videoTrack.box.getDescendant('mdhd', MdhdBox);
-  const videoTrackTkhdBox = videoTrack.box.getDescendant('tkhd', TkhdBox);
+  const videoTrackMdhdBox = videoTrack.box?.getDescendant('mdhd', MdhdBox);
+  const videoTrackTkhdBox = videoTrack.box?.getDescendant('tkhd', TkhdBox);
   if (!videoTrackMdhdBox || !videoTrackTkhdBox) {
     console.error('No mdhd or tkhd box found for video track');
     return null;
@@ -633,7 +633,7 @@ export function muxAgtmMetadata(
 
   // Update chunk offset boxes based on new offsets in allChunks.
   for (const track of Object.values(mp4.tracks)) {
-    const trackStblBox = track.box.getDescendant('stbl', StblBox);
+    const trackStblBox = track.box?.getDescendant('stbl', StblBox);
     if (!trackStblBox) continue;
     const trackStcoBox =
       trackStblBox.getDescendant('stco', StcoBox) ??

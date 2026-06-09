@@ -15,12 +15,6 @@
  */
 
 import {AgtmMetadata, Altr, ComponentMix, Point2} from './color_helpers/agtm';
-import {
-  getChromaticities,
-  kPrimariesP3,
-  kPrimariesRec2020,
-  kPrimariesSRGB,
-} from './color_helpers/color_functions';
 import {parseAgtm} from './agtm_parser';
 import {Bitstream} from './bitstream';
 import {Hdr10pMetadata, Hdr10pWindow} from './color_helpers/hdr10p';
@@ -60,6 +54,43 @@ import {
   TrakBox,
   TrefBox,
 } from './isobmff';
+import {
+  EbmlBinaryElement,
+  EbmlBlockElement,
+  EbmlElement,
+  EbmlMasterElement,
+  EbmlStringElement,
+  EbmlUintElement,
+  ID_BLOCK,
+  ID_BLOCK_ADDITIONAL,
+  ID_BLOCK_ADDITIONS,
+  ID_BLOCK_ADD_ID,
+  ID_BLOCK_DURATION,
+  ID_BLOCK_GROUP,
+  ID_BLOCK_MORE,
+  ID_CLUSTER,
+  ID_CLUSTER_TIMECODE,
+  ID_CODEC_ID,
+  ID_COLOUR,
+  ID_COLOUR_MATRIX,
+  ID_DEFAULT_DURATION,
+  ID_COLOUR_PRIMARIES,
+  ID_COLOUR_RANGE,
+  ID_COLOUR_TRANSFER,
+  ID_INFO,
+  ID_REFERENCE_BLOCK,
+  ID_SEGMENT,
+  ID_SIMPLE_BLOCK,
+  ID_TIMECODE_SCALE,
+  ID_TRACKS,
+  ID_TRACK_ENTRY,
+  ID_TRACK_NUMBER,
+  ID_TRACK_TYPE,
+  ID_VIDEO,
+  findEbmlElement,
+  parseEbml,
+  elementIsOfType
+} from './webm';
 
 interface T35Data {
   countryCode: number;
@@ -90,8 +121,6 @@ interface SEIMessage {
   payload: SEIPayload;
 }
 
-type ItutT35MetadataType = 'AGTM' | 'HDR10+';
-type HdrMetadataType = 'CICP' | ItutT35MetadataType;
 
 interface VUI {
   colourPrimaries?: number;
@@ -150,11 +179,16 @@ interface PPS {
   transformSkipEnabledFlag: number;
 }
 
-export interface MebxSample {
+interface MebxSample {
   localKey: string;
   keyNamespace: string;
   keyName: string;
   setuBox?: Box;
+  data: Uint8Array;
+}
+
+interface WebmBlockAddition {
+  id: number;
   data: Uint8Array;
 }
 
@@ -183,6 +217,8 @@ export interface Sample {
   // For samples in a mebx track (multiplexed metadata), list of metadata
   // samples contained in this sample.
   mebxSamples?: MebxSample[];
+  // For WebM samples, list of block additions (e.g. T.35 metadata).
+  webmBlockAdditions?: WebmBlockAddition[];
 }
 
 export interface Chunk {
@@ -201,16 +237,20 @@ export interface Track {
   codec: string;
   handlerType: string;
   timescale: number;
-  box: TrakBox;
+  defaultDuration?: number; // Sample default duration, in timescale units.
+  box?: TrakBox;
 }
 
-interface FrameMetadata {
+export type ItutT35MetadataType = 'AGTM' | 'HDR10+';
+export type HdrMetadataType = 'CICP' | ItutT35MetadataType;
+
+export interface FrameMetadata {
   presentationTimeSec: number;
   agtm?: AgtmMetadata;
   hdr10p?: Hdr10pMetadata;
 }
 
-interface HdrMetadataForTrack {
+export interface HdrMetadataForTrack {
   name: HdrMetadataType;
   frames: FrameMetadata[]; // Sorted by presentationTimeSec.
   // The track ID of containing this metadata.
@@ -257,7 +297,7 @@ type MetadataObuPayload =
   | MetadataItutT35
   | MetadataUnknown;
 
-export interface SequenceHeaderOBU {
+interface SequenceHeaderOBU {
   seqProfile: number;
   stillPicture: number;
   reducedStillPictureHeader: number;
@@ -279,7 +319,7 @@ export interface SequenceHeaderOBU {
 /**
  * AV1 Frame Header OBU payload.
  */
-export interface FrameHeaderOBU {
+interface FrameHeaderOBU {
   showExistingFrame: number;
   frameToShowMapIdx?: number;
   frameType?: number;
@@ -289,7 +329,7 @@ export interface FrameHeaderOBU {
   error?: string;
 }
 
-export interface OBUHeader {
+interface OBUHeader {
   forbiddenBit: number;
   type: number;
   typeName: string;
@@ -302,7 +342,7 @@ export interface OBUHeader {
   internalObuSize?: number;
 }
 
-export interface OBU {
+interface OBU {
   size: number; // Full size including the header and size field.
   header: OBUHeader;
   payload:
@@ -313,8 +353,10 @@ export interface OBU {
     | null;
 }
 
-export interface ParsedMp4 {
-  boxes: Box[];
+export interface ParsedMedia {
+  containerType: 'mp4' | 'webm';
+  boxes: Box[];  // For mp4.
+  ebmlElements: EbmlElement[];  // For webm.
   tracks: {[trackId: string]: Track};
   numKeyframes: number;
   hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}};
@@ -412,7 +454,7 @@ function parseHdr10p(stream: Bitstream): Hdr10pMetadata | null {
   return data as Hdr10pMetadata;
 }
 
-function parseT35(payload: Uint8Array): T35Data {
+export function parseT35(payload: Uint8Array): T35Data {
   const stream = new Bitstream(payload);
   const t35: Partial<T35Data> = {};
   t35.countryCode = stream.readBits(8);
@@ -795,6 +837,38 @@ class NALUnit {
   }
 }
 
+/**
+ * Returns the HdrMetadataForTrack for the given video track ID and type.
+ * `metadataSourceTrackId` specifies the ID of the track that contains the
+ * metadata, and is assumed to be the same as `videoTrackId` if not provided.
+ * If a HdrMetadataForTrack does not exist yet for this video track ID and
+ * type, it is created and returned.
+ * If it does exist but has a different source track ID, a new
+ * HdrMetadataForTrack is created to override the previous metadata,
+ * keeping a reference to the previous metadata in `overriddenMetadata`.
+ */
+function getOrAddHdrMetadata(
+  hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}},
+  videoTrackId: number,
+  type: HdrMetadataType,
+  metadataSourceTrackId?: number,
+): HdrMetadataForTrack {
+  if (!hdrMetadata[videoTrackId]) {
+    hdrMetadata[videoTrackId] = {};
+  }
+  const sourceTrackId = metadataSourceTrackId ?? videoTrackId;
+  const existing = hdrMetadata[videoTrackId][type];
+  if (!existing || sourceTrackId !== existing.sourceTrackId) {
+    hdrMetadata[videoTrackId][type] = {
+      name: type,
+      frames: [],
+      sourceTrackId,
+      overridenMetadata: existing,
+    };
+  }
+  return hdrMetadata[videoTrackId][type];
+}
+
 function getHdrMetadata(
   hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}},
   trackId: number,
@@ -905,35 +979,17 @@ class MP4Parser {
     return this.boxes;
   }
 
-  /**
-   * Returns the HdrMetadataForTrack for the given video track ID and type.
-   * `metadataSourceTrackId` specifies the ID of the track that contains the
-   * metadata, and is assumed to be the same as `videoTrackId` if not provided.
-   * If a HdrMetadataForTrack does not exist yet for this video track ID and
-   * type, it is created and returned.
-   * If it does exist but has a different source track ID, a new
-   * HdrMetadataForTrack is created to override the previous metadata,
-   * keeping a reference to the previous metadata in `overriddenMetadata`.
-   */
   getOrAddHdrMetadata(
     videoTrackId: number,
     type: HdrMetadataType,
     metadataSourceTrackId?: number,
   ): HdrMetadataForTrack {
-    if (!this.hdrMetadata[videoTrackId]) {
-      this.hdrMetadata[videoTrackId] = {};
-    }
-    const sourceTrackId = metadataSourceTrackId ?? videoTrackId;
-    const existing = this.hdrMetadata[videoTrackId][type];
-    if (!existing || sourceTrackId !== existing.sourceTrackId) {
-      this.hdrMetadata[videoTrackId][type] = {
-        name: type,
-        frames: [],
-        sourceTrackId,
-        overridenMetadata: existing,
-      };
-    }
-    return this.hdrMetadata[videoTrackId][type];
+    return getOrAddHdrMetadata(
+      this.hdrMetadata,
+      videoTrackId,
+      type,
+      metadataSourceTrackId,
+    );
   }
 
   private gatherSamples(): void {
@@ -1012,7 +1068,7 @@ class MP4Parser {
       });
     } else if (track.handlerType === 'meta' && track.codec === 'it35') {
       // Find the 'it35' box within the track's stsd.
-      const stsd = track.box.getDescendant('stsd', StsdBox);
+      const stsd = track.box?.getDescendant('stsd', StsdBox);
       const it35Box = stsd ? stsd.getChild('it35', It35SampleEntryBox) : null;
       const t35Identifier = it35Box?.t35Identifier ?? new Uint8Array(0);
 
@@ -1027,7 +1083,7 @@ class MP4Parser {
         this.updateHdrMetadataFromT35(t35, track.id, track.box, sample);
       });
     } else if (track.handlerType === 'meta' && track.codec === 'mebx') {
-      const keysBox = track.box.getDescendant('keys', KeysBox);
+      const keysBox = track.box?.getDescendant('keys', KeysBox);
 
       // Map of mebx local keys (4cc) to type info.
       const mebxTypes: {
@@ -1122,10 +1178,10 @@ class MP4Parser {
   private updateHdrMetadataFromT35(
     t35: T35Data,
     metadataTrackId: number,
-    metadataTrackBox: TrakBox,
+    metadataTrackBox: TrakBox|undefined,
     sample: Sample,
   ): void {
-    const tref = metadataTrackBox.getChild('tref', TrefBox);
+    const tref = metadataTrackBox?.getChild('tref', TrefBox);
     const trefChildBox =
       tref?.getChild('cdsc', TrackReferenceTypeBox) ??
       tref?.getChild('rndr', TrackReferenceTypeBox);
@@ -1756,10 +1812,17 @@ function findSampleIndexForTime(
  * @param parsedMp4 The parsed MP4 file.
  * @returns The framerate, or null if it cannot be determined.
  */
-export function getAverageFramerate(parsedMp4: ParsedMp4): number | null {
+export function getAverageFramerate(parsedMp4: ParsedMedia): number | null {
   const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
   if (!videoTrack || !videoTrack.samples.length || !videoTrack.timescale) {
     return null;
+  }
+  if (!videoTrack.box) {
+    const numSamples = videoTrack.samples.length;
+    if (numSamples === 0) return null;
+    const lastSample = videoTrack.samples[numSamples - 1];
+    const durationSec = lastSample.presentationTimeSec + lastSample.presentationDurationSec;
+    return durationSec > 0 ? numSamples / durationSec : null;
   }
   const mdhd = videoTrack.box.getDescendant('mdhd', MdhdBox);
   if (!mdhd) {
@@ -1778,11 +1841,11 @@ export function getAverageFramerate(parsedMp4: ParsedMp4): number | null {
 
 /**
  * Returns the CICP metadata from the video file.
- * @param parsedMp4 The parsed MP4 file.
+ * @param parsedMp4 The parsed MP4/WebM file.
  * @returns The CICP metadata object, or null if not found.
  */
 export function getCicp(
-  parsedMp4: ParsedMp4,
+  parsedMp4: ParsedMedia,
 ): Partial<HdrMetadataForTrack> | null {
   try {
     const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
@@ -1809,7 +1872,7 @@ interface TrackMetadata {
 }
 
 function getHDRMetadata(
-  parsedMp4: ParsedMp4,
+  parsedMp4: ParsedMedia,
   time: number,
   metadataType: HdrMetadataType,
 ): TrackMetadata {
@@ -1842,12 +1905,12 @@ function getHDRMetadata(
 
 /**
  * Returns the SMPTE 2094.40 (HDR10+) metadata from the video file.
- * @param parsedMp4 The parsed MP4 file.
+ * @param parsedMp4 The parsed video file.
  * @param time The time in seconds to retrieve the metadata for.
  * @returns The SMPTE 2094.40 metadata object, or null if not found.
  */
 export function getSmpte209440Metadata(
-  parsedMp4: ParsedMp4,
+  parsedMp4: ParsedMedia,
   time: number,
 ): Hdr10pMetadata | string {
   const metadata = getHDRMetadata(parsedMp4, time, 'HDR10+');
@@ -1858,7 +1921,7 @@ export function getSmpte209440Metadata(
 }
 
 export function getAgtmMetadata(
-  parsedMp4: ParsedMp4,
+  parsedMp4: ParsedMedia,
   time: number,
 ): AgtmMetadata | string {
   const metadata = getHDRMetadata(parsedMp4, time, 'AGTM');
@@ -1869,11 +1932,11 @@ export function getAgtmMetadata(
 }
 
 /**
- * Removes a track from the MP4.
- * @param mp4 The parsed MP4 file.
+ * Removes a track from the movie.
+ * @param mp4 The parsed video file.
  * @param trackId The ID of the track to remove.
  */
-export function removeTrack(mp4: ParsedMp4, trackId: number): void {
+export function removeTrack(mp4: ParsedMedia, trackId: number): void {
   const track = mp4.tracks[trackId];
   if (!track) {
     return;
@@ -1890,12 +1953,14 @@ export function removeTrack(mp4: ParsedMp4, trackId: number): void {
   }
 }
 
-export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMp4 | null {
+export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMedia | null {
   try {
     const mp4Parser = new MP4Parser(arrayBuffer);
     mp4Parser.parse();
     return {
+      containerType: 'mp4',
       boxes: mp4Parser.boxes,
+      ebmlElements: [],
       tracks: mp4Parser.tracks,
       numKeyframes: mp4Parser.numKeyframes,
       hdrMetadata: mp4Parser.hdrMetadata,
@@ -1903,6 +1968,278 @@ export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMp4 | null {
     };
   } catch (error: unknown) {
     console.error('Error parsing MP4:', error);
+    return null;
+  }
+}
+
+class WebmParser {
+  elements: EbmlElement[] = [];
+  tracks: {[trackId: number]: Track} = {};
+  samples: Sample[] = [];
+  hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}} = {};
+  numKeyframes = 0;
+  private readonly buffer: ArrayBuffer;
+
+  constructor(arrayBuffer: ArrayBuffer) {
+    this.buffer = arrayBuffer;
+  }
+
+  parse(): EbmlElement[] {
+    const elements = parseEbml(this.buffer);
+    this.elements = elements;
+    const segment = findEbmlElement(elements, ID_SEGMENT, EbmlMasterElement);
+    if (!segment) return elements;
+
+    let timecodeScale = 1000000;
+    const info = segment.getChild(ID_INFO, EbmlMasterElement);
+    if (info) {
+      const ts = info.getChild(ID_TIMECODE_SCALE, EbmlUintElement);
+      if (ts) timecodeScale = ts.value;
+    }
+
+    const tracksEl = segment.getChild(ID_TRACKS, EbmlMasterElement);
+    if (tracksEl) {
+      for (const trackEntry of tracksEl.children) {
+        if (!elementIsOfType(trackEntry, ID_TRACK_ENTRY, EbmlMasterElement)) {
+          continue;
+        }
+        const trackNum = (
+          trackEntry.getChild(ID_TRACK_NUMBER, EbmlUintElement)
+        )?.value;
+        const trackType = (trackEntry.getChild(ID_TRACK_TYPE, EbmlUintElement))
+          ?.value;
+        const codecId = (trackEntry.getChild(ID_CODEC_ID, EbmlStringElement))
+          ?.value;
+        const defaultDurationNs = (trackEntry.getChild(ID_DEFAULT_DURATION, EbmlUintElement))
+          ?.value;
+
+        if (trackNum !== undefined) {
+          const video = trackEntry.getChild(ID_VIDEO, EbmlMasterElement);
+          let primaries, transfer, matrix, range;
+          if (video) {
+            const colour = video.getChild(ID_COLOUR, EbmlMasterElement);
+            if (colour) {
+              primaries = (
+                colour.getChild(ID_COLOUR_PRIMARIES, EbmlUintElement)
+              )?.value;
+              transfer = (colour.getChild(ID_COLOUR_TRANSFER, EbmlUintElement))
+                ?.value;
+              matrix = (colour.getChild(ID_COLOUR_MATRIX, EbmlUintElement))
+                ?.value;
+              range = (colour.getChild(ID_COLOUR_RANGE, EbmlUintElement))
+                ?.value;
+            }
+          }
+
+          this.tracks[trackNum] = {
+            id: trackNum,
+            samples: [],
+            samplesSortedByPresentationTime: [],
+            chunks: [],
+            codec:
+              codecId === 'V_VP9'
+                ? 'vp09'
+                : codecId === 'V_AV1'
+                  ? 'av01'
+                  : 'unknown',
+            handlerType: trackType === 1 ? 'vide' : 'unknown',
+            timescale: 1e9 / timecodeScale,
+            defaultDuration: defaultDurationNs ? (defaultDurationNs / timecodeScale) : undefined,
+          };
+
+          if (
+            primaries !== undefined &&
+            transfer !== undefined &&
+            matrix !== undefined
+          ) {
+            const cicp = getOrAddHdrMetadata(this.hdrMetadata, trackNum, 'CICP');
+            cicp.colourPrimaries = primaries;
+            cicp.transferCharacteristics = transfer;
+            cicp.matrixCoefficients = matrix;
+          }
+        }
+      }
+    }
+
+    // Parse Clusters for samples
+    for (const cluster of segment.children) {
+      if (!elementIsOfType(cluster, ID_CLUSTER, EbmlMasterElement))
+        continue;
+      let clusterTimecode = 0;
+      const ct = cluster.getChild(ID_CLUSTER_TIMECODE, EbmlUintElement);
+      if (ct) clusterTimecode = ct.value;
+
+      for (const child of cluster.children) {
+        if (elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement)) {
+          this.processBlock(child, clusterTimecode, timecodeScale, child.trackNum);
+        } else if (elementIsOfType(child, ID_BLOCK_GROUP, EbmlMasterElement)) {
+          const block = child.getChild(ID_BLOCK, EbmlBlockElement);
+          if (block && this.tracks[block.trackNum]) {
+            const duration =
+              child.getChild(ID_BLOCK_DURATION, EbmlUintElement)?.value;
+            const additions = child.getChild(
+              ID_BLOCK_ADDITIONS, EbmlMasterElement);
+            const referenceBlock = child.getChild(ID_REFERENCE_BLOCK, EbmlUintElement);
+            const isKeyframe = referenceBlock === null;
+
+            this.processBlock(
+              block,
+              clusterTimecode,
+              timecodeScale,
+              block.trackNum,
+              duration,
+              additions ?? undefined,
+              isKeyframe
+            );
+          }
+        }
+      }
+    }
+
+    // Finalize all tracks and gather samples
+    for (const trackId in this.tracks) {
+      this.finalizeTrack(this.tracks[trackId], timecodeScale);
+    }
+    this.gatherSamples();
+
+    return elements;
+  }
+
+  private processBlock(
+    block: EbmlBlockElement,
+    clusterTimecode: number,
+    timecodeScale: number,
+    trackId: number,
+    duration?: number,
+    additions?: EbmlMasterElement,
+    isKeyframeInferred?: boolean
+  ) {
+    const presentationTimeNanos =
+      ((clusterTimecode + block.timecode) * timecodeScale);
+    const presentationTimeSec = presentationTimeNanos / 1e9;
+    const sample: Sample = {
+      id: this.tracks[trackId].samples.length,
+      trackId,
+      offset: block.offset,
+      size: block.size,
+      isSync:
+        block.id === ID_SIMPLE_BLOCK
+          ? (block.flags & 0x80) !== 0
+          : (isKeyframeInferred ?? true),
+      data: block.data,
+      dts: clusterTimecode + block.timecode,
+      duration: duration ?? 0,
+      cts: clusterTimecode + block.timecode,
+      presentationTimeSec,
+      presentationDurationSec: duration
+        ? (duration * timecodeScale) / 1e9
+        : 0,
+    };
+
+    if (additions) {
+      const webmBlockAdditions: WebmBlockAddition[] = [];
+      for (const more of additions.children) {
+        if (elementIsOfType(more, ID_BLOCK_MORE, EbmlMasterElement)) {
+          const addId = (more.getChild(ID_BLOCK_ADD_ID, EbmlUintElement))
+            ?.value;
+          const addData = (
+            more.getChild(ID_BLOCK_ADDITIONAL, EbmlBinaryElement)
+          )?.data;
+          if (addId !== undefined && addData) {
+            webmBlockAdditions.push({id: addId, data: addData});
+            if (addId === 4) {
+              // T35
+              const t35 = parseT35(addData);
+              if (t35.metadataType && (t35.agtm || t35.hdr10p)) {
+                const meta = getOrAddHdrMetadata(
+                  this.hdrMetadata,
+                  trackId,
+                  t35.metadataType
+                );
+                meta.frames.push({
+                  presentationTimeSec,
+                  agtm: t35.agtm,
+                  hdr10p: t35.hdr10p,
+                });
+              }
+            }
+          }
+        }
+      }
+      if (webmBlockAdditions.length > 0) {
+        sample.webmBlockAdditions = webmBlockAdditions;
+      }
+    }
+
+    if (sample.isSync) this.numKeyframes++;
+    this.tracks[trackId].samples.push(sample);
+  }
+
+  private gatherSamples(): void {
+    this.samples = [];
+    for (const trackId in this.tracks) {
+      if (!Object.prototype.hasOwnProperty.call(this.tracks, trackId)) continue;
+      const track = this.tracks[trackId];
+      this.samples.push(...track.samples);
+    }
+    // Sort samples by offset to ensure they are in file order.
+    this.samples.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
+  }
+
+  private finalizeTrack(track: Track, timecodeScale: number) {
+    const samples = track.samples;
+    if (samples.length > 0) {
+      let totalDurationSec = 0;
+      for (let i = 0; i < samples.length - 1; i++) {
+        const durSec =
+          samples[i + 1].presentationTimeSec - samples[i].presentationTimeSec;
+        samples[i].presentationDurationSec = durSec;
+        samples[i].duration = samples[i + 1].dts - samples[i].dts;
+        totalDurationSec += durSec;
+      }
+
+      // Determine fallback duration for the last sample.
+      let lastDurationSec = 0;
+      if (samples.length > 1) {
+        lastDurationSec = totalDurationSec / (samples.length - 1);
+      } else if (track.defaultDuration) {
+        lastDurationSec = (track.defaultDuration * timecodeScale) / 1e9;
+      } else {
+        lastDurationSec = 1 / 30; // Assume 30fps if no other info.
+      }
+
+      const lastIdx = samples.length - 1;
+      if (samples[lastIdx].duration === 0) {
+        samples[lastIdx].duration = Math.round((lastDurationSec * 1e9) / timecodeScale);
+      }
+      if (samples[lastIdx].presentationDurationSec === 0) {
+        samples[lastIdx].presentationDurationSec = lastDurationSec;
+      }
+    }
+    track.samplesSortedByPresentationTime = [...samples].sort(
+      (a, b) => a.presentationTimeSec - b.presentationTimeSec
+    );
+  }
+}
+
+export function parseWebm(arrayBuffer: ArrayBuffer): ParsedMedia | null {
+  try {
+    const webmParser = new WebmParser(arrayBuffer);
+    webmParser.parse();
+    const videoTrack = getFirstVideoTrack(webmParser.tracks);
+    if (!videoTrack) return null;
+
+    return {
+      containerType: 'webm',
+      boxes: [],
+      ebmlElements: webmParser.elements,
+      tracks: webmParser.tracks,
+      numKeyframes: webmParser.numKeyframes,
+      hdrMetadata: webmParser.hdrMetadata,
+      samples: webmParser.samples,
+    };
+  } catch (error: unknown) {
+    console.error('Error parsing WebM:', error);
     return null;
   }
 }
