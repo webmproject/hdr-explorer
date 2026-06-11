@@ -61,6 +61,7 @@ import {
   EbmlMasterElement,
   EbmlStringElement,
   EbmlUintElement,
+  bigintToNumber,
   ID_BLOCK,
   ID_BLOCK_ADDITIONAL,
   ID_BLOCK_ADDITIONS,
@@ -1972,6 +1973,24 @@ export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMedia | null {
   }
 }
 
+/**
+ * Returns the equivalent MP4 handler type for the given MKV track type.
+ */
+function mkvTrackTypeToMp4Handler(trackType: number | undefined): string {
+  switch (trackType) {
+    case 1:
+      return 'vide';
+    case 2:
+      return 'soun';
+    case 17:
+      return 'subt';
+    case 33:
+      return 'meta';
+    default:
+      return 'unknown';
+  }
+}
+
 class WebmParser {
   elements: EbmlElement[] = [];
   tracks: {[trackId: number]: Track} = {};
@@ -1994,7 +2013,7 @@ class WebmParser {
     const info = segment.getChild(ID_INFO, EbmlMasterElement);
     if (info) {
       const ts = info.getChild(ID_TIMECODE_SCALE, EbmlUintElement);
-      if (ts) timecodeScale = ts.value;
+      if (ts) timecodeScale = bigintToNumber(ts.value) ?? 1000000;
     }
 
     const tracksEl = segment.getChild(ID_TRACKS, EbmlMasterElement);
@@ -2003,15 +2022,16 @@ class WebmParser {
         if (!elementIsOfType(trackEntry, ID_TRACK_ENTRY, EbmlMasterElement)) {
           continue;
         }
-        const trackNum = (
-          trackEntry.getChild(ID_TRACK_NUMBER, EbmlUintElement)
-        )?.value;
+        const trackNum = bigintToNumber(
+          trackEntry.getChild(ID_TRACK_NUMBER, EbmlUintElement)?.value,
+        );
         const trackType = (trackEntry.getChild(ID_TRACK_TYPE, EbmlUintElement))
           ?.value;
         const codecId = (trackEntry.getChild(ID_CODEC_ID, EbmlStringElement))
           ?.value;
-        const defaultDurationNs = (trackEntry.getChild(ID_DEFAULT_DURATION, EbmlUintElement))
-          ?.value;
+        const defaultDurationNs = bigintToNumber(
+          trackEntry.getChild(ID_DEFAULT_DURATION, EbmlUintElement)?.value,
+        );
 
         if (trackNum !== undefined) {
           const video = trackEntry.getChild(ID_VIDEO, EbmlMasterElement);
@@ -2019,15 +2039,18 @@ class WebmParser {
           if (video) {
             const colour = video.getChild(ID_COLOUR, EbmlMasterElement);
             if (colour) {
-              primaries = (
-                colour.getChild(ID_COLOUR_PRIMARIES, EbmlUintElement)
-              )?.value;
-              transfer = (colour.getChild(ID_COLOUR_TRANSFER, EbmlUintElement))
-                ?.value;
-              matrix = (colour.getChild(ID_COLOUR_MATRIX, EbmlUintElement))
-                ?.value;
-              range = (colour.getChild(ID_COLOUR_RANGE, EbmlUintElement))
-                ?.value;
+              primaries = bigintToNumber(
+                colour.getChild(ID_COLOUR_PRIMARIES, EbmlUintElement)?.value,
+              );
+              transfer = bigintToNumber(
+                colour.getChild(ID_COLOUR_TRANSFER, EbmlUintElement)?.value,
+              );
+              matrix = bigintToNumber(
+                colour.getChild(ID_COLOUR_MATRIX, EbmlUintElement)?.value,
+              );
+              range = bigintToNumber(
+                colour.getChild(ID_COLOUR_RANGE, EbmlUintElement)?.value,
+              );
             }
           }
 
@@ -2042,7 +2065,7 @@ class WebmParser {
                 : codecId === 'V_AV1'
                   ? 'av01'
                   : 'unknown',
-            handlerType: trackType === 1 ? 'vide' : 'unknown',
+            handlerType: mkvTrackTypeToMp4Handler(bigintToNumber(trackType)),
             timescale: 1e9 / timecodeScale,
             defaultDuration: defaultDurationNs ? (defaultDurationNs / timecodeScale) : undefined,
           };
@@ -2067,16 +2090,18 @@ class WebmParser {
         continue;
       let clusterTimecode = 0;
       const ct = cluster.getChild(ID_CLUSTER_TIMECODE, EbmlUintElement);
-      if (ct) clusterTimecode = ct.value;
+      if (ct) clusterTimecode = bigintToNumber(ct.value) ?? 0;
 
       for (const child of cluster.children) {
         if (elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement)) {
-          this.processBlock(child, clusterTimecode, timecodeScale, child.trackNum);
+          this.processBlock(child, clusterTimecode, timecodeScale, bigintToNumber(child.trackNum) ?? 0);
         } else if (elementIsOfType(child, ID_BLOCK_GROUP, EbmlMasterElement)) {
           const block = child.getChild(ID_BLOCK, EbmlBlockElement);
-          if (block && this.tracks[block.trackNum]) {
-            const duration =
-              child.getChild(ID_BLOCK_DURATION, EbmlUintElement)?.value;
+          const trackNum = bigintToNumber(block?.trackNum);
+          if (block && trackNum !== undefined && this.tracks[trackNum]) {
+            const duration = bigintToNumber(
+              child.getChild(ID_BLOCK_DURATION, EbmlUintElement)?.value,
+            );
             const additions = child.getChild(
               ID_BLOCK_ADDITIONS, EbmlMasterElement);
             const referenceBlock = child.getChild(ID_REFERENCE_BLOCK, EbmlUintElement);
@@ -2086,7 +2111,7 @@ class WebmParser {
               block,
               clusterTimecode,
               timecodeScale,
-              block.trackNum,
+              trackNum,
               duration,
               additions ?? undefined,
               isKeyframe
@@ -2140,8 +2165,9 @@ class WebmParser {
       const webmBlockAdditions: WebmBlockAddition[] = [];
       for (const more of additions.children) {
         if (elementIsOfType(more, ID_BLOCK_MORE, EbmlMasterElement)) {
-          const addId = (more.getChild(ID_BLOCK_ADD_ID, EbmlUintElement))
-            ?.value;
+          const addId = bigintToNumber(
+            more.getChild(ID_BLOCK_ADD_ID, EbmlUintElement)?.value,
+          );
           const addData = (
             more.getChild(ID_BLOCK_ADDITIONAL, EbmlBinaryElement)
           )?.data;

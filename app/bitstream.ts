@@ -195,6 +195,10 @@ export class DataStream {
     this.offset = p;
   }
 
+  atEos(): boolean {
+    return this.remaining <= 0;
+  }
+
   get size(): number {
     return this.view.byteLength;
   }

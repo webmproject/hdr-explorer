@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import {ByteWriter} from './bitstream';
 import {AgtmMetadata} from './color_helpers/agtm';
 import {
   getChromaticities,
@@ -47,8 +48,35 @@ import {
   findBox,
   writeIsobmff,
 } from './isobmff';
-import {ByteWriter} from './bitstream';
-import {Chunk, Sample, parseMp4, removeTrack} from './media_parser';
+import {
+  Chunk,
+  ParsedMedia,
+  Sample,
+  getFirstVideoTrack,
+  parseMp4,
+  parseWebm,
+  removeTrack,
+} from './media_parser';
+import {
+  EbmlBinaryElement,
+  EbmlBlockElement,
+  EbmlElement,
+  EbmlMasterElement,
+  EbmlUintElement,
+  ID_BLOCK,
+  ID_BLOCK_ADDITIONAL,
+  ID_BLOCK_ADDITIONS,
+  ID_BLOCK_ADD_ID,
+  ID_BLOCK_GROUP,
+  ID_BLOCK_MORE,
+  ID_CLUSTER,
+  ID_EBML,
+  ID_SEGMENT,
+  ID_SIMPLE_BLOCK,
+  elementIsOfType,
+  findEbmlElement,
+  writeEbml,
+} from './webm';
 
 // Everything in ISOBMFF and SMPTE 2094-50 is big endian.
 const ENDIANNESS = false; // big-endian
@@ -299,6 +327,10 @@ export function makeAgtmPayload(m: AgtmMetadata): Uint8Array {
   return new Uint8Array(buffer).subarray(0, offset);
 }
 
+const T35_COUNTRY_CODE = 0xb5;  // United States
+const T35_PROVIDER_CODE = 0x0090;  // SMPTE
+const T35_PROVIDER_ORIENTED_CODE = 0x0001;  // SMPTE ST 2094-50 (AGTM)
+
 function makeT35Identifier(): Uint8Array {
   // The T35 payload has a size of 5 bytes:
   // - itu_t_t35_country_code (1)
@@ -307,26 +339,178 @@ function makeT35Identifier(): Uint8Array {
   const t35Payload = new Uint8Array(5);
   const t35DataView = new DataView(t35Payload.buffer);
   let offset = 0;
-  // country_code = 0xB5 (USA)
-  t35DataView.setUint8(offset++, 0xb5);
-  // terminal_provider_code = 0x0090 (SMPTE)
-  t35DataView.setUint16(offset, 0x0090, ENDIANNESS);
+  t35DataView.setUint8(offset++, T35_COUNTRY_CODE);
+  t35DataView.setUint16(offset, T35_PROVIDER_CODE, ENDIANNESS);
   offset += 2;
-  // terminal_provider_oriented_code = 0x0001 (AGTM)
-  t35DataView.setUint16(offset, 0x0001, ENDIANNESS);
+  t35DataView.setUint16(offset, T35_PROVIDER_ORIENTED_CODE, ENDIANNESS);
   offset += 2;
   return t35Payload;
 }
 
 /**
- * Takes in an AV1 MP4 file and injects the given AGTM metadata into it.
- * @param source The source MP4 file as an ArrayBuffer.
- * @param metadataList The list of AGTM metadata to inject. The index in the
- *     list corresponds to the index of the frame that the metadata should
- *     be associated with.
- * @returns The modified MP4 file as an ArrayBuffer or null in case of error.
+ * Creates an EBML BlockMore element containing the AGTM metadata.
  */
-export function muxAgtmMetadata(
+function makeAgtmBlockMore(meta: AgtmMetadata): EbmlMasterElement {
+  const more = new EbmlMasterElement(ID_BLOCK_MORE);
+  const addId = new EbmlUintElement(ID_BLOCK_ADD_ID, /*size=*/ 1);
+  addId.value = BigInt(4);
+  const addData = new EbmlBinaryElement(ID_BLOCK_ADDITIONAL);
+  const t35Header = makeT35Identifier();
+  const agtmPayload = makeAgtmPayload(meta);
+  const combined = new Uint8Array(t35Header.length + agtmPayload.length);
+  combined.set(t35Header, 0);
+  combined.set(agtmPayload, t35Header.length);
+  addData.data = combined;
+  addData.size = combined.length;
+
+  more.children.push(addId);
+  more.children.push(addData);
+  return more;
+}
+
+/**
+ * Returns true if the given BlockMore element contains AGTM metadata.
+ */
+function isAgtmBlockMore(more: EbmlMasterElement): boolean {
+  const addIdEl = more.getChild(ID_BLOCK_ADD_ID, EbmlUintElement);
+  if (!addIdEl || addIdEl.value !== BigInt(4) /* ITUT T.35 metadata */) {
+    return false;
+  }
+  const addDataEl = more.getChild(ID_BLOCK_ADDITIONAL, EbmlBinaryElement);
+  if (!addDataEl || addDataEl.data.length < 5) {
+    return false;
+  }
+  const dv = new DataView(
+    addDataEl.data.buffer,
+    addDataEl.data.byteOffset,
+    addDataEl.data.length,
+  );
+  return (
+    dv.getUint8(0) === T35_COUNTRY_CODE &&
+    dv.getUint16(1, ENDIANNESS) === T35_PROVIDER_CODE &&
+    dv.getUint16(3, ENDIANNESS) === T35_PROVIDER_ORIENTED_CODE
+  );
+}
+
+function muxAgtmMetadataWebm(
+  source: ArrayBuffer,
+  webm: ParsedMedia,
+  metadataList: Array<AgtmMetadata | null>,
+): ArrayBuffer | null {
+  if (metadataList.length === 0) {
+    return null;
+  }
+  const segment = findEbmlElement(
+    webm.ebmlElements,
+    ID_SEGMENT,
+    EbmlMasterElement,
+  );
+  if (!segment) {
+    console.error('No segment found in WebM');
+    return null;
+  }
+  const videoTrack = getFirstVideoTrack(webm.tracks);
+  if (!videoTrack) {
+    console.error('No video track found in WebM');
+    return null;
+  }
+
+  // Map of byte offset to agtm metadata.
+  // The sample boxes don't have embedded ids so we use the byte offset as a
+  // sort of id instead.
+  const offsetToMetadata = new Map<number, AgtmMetadata | null>();
+  const sortedSamples = videoTrack.samplesSortedByPresentationTime;
+  let currentMetadata = metadataList[0];
+  for (let i = 0; i < sortedSamples.length; i++) {
+    const sample = sortedSamples[i];
+    const meta = metadataList[i] ?? currentMetadata;
+    currentMetadata = meta;
+    offsetToMetadata.set(sample.offset, meta);
+  }
+
+  for (const cluster of segment.children) {
+    if (!elementIsOfType(cluster, ID_CLUSTER, EbmlMasterElement)) {
+      continue;
+    }
+
+    const newClusterChildren: EbmlElement[] = [];
+
+    for (const child of cluster.children) {
+      let meta = offsetToMetadata.get(child.offset);
+      if (elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement) &&
+        child.trackNum === BigInt(videoTrack.id) && meta) {
+        // Turn the SimpleBlock into a BlockGroup with the AGTM in BlockAdditions.
+        const blockGroup = new EbmlMasterElement(ID_BLOCK_GROUP);
+        const block = new EbmlBlockElement(ID_BLOCK, child.size);
+        block.trackNum = child.trackNum;
+        block.timecode = child.timecode;
+        block.flags = child.flags;
+        block.data = child.data;
+        blockGroup.children.push(block);
+
+        const additions = new EbmlMasterElement(ID_BLOCK_ADDITIONS);
+        additions.children.push(makeAgtmBlockMore(meta));
+        blockGroup.children.push(additions);
+
+        newClusterChildren.push(blockGroup);
+      } else if (elementIsOfType(child, ID_BLOCK_GROUP, EbmlMasterElement)) {
+        const block = child.getChild(ID_BLOCK, EbmlBlockElement);
+        if (block && block.trackNum === BigInt(videoTrack.id)) {
+          meta = offsetToMetadata.get(block.offset);
+          // Modified BlockGroup (create a new one to avoid modifying the source).
+          const newBlockGroup = new EbmlMasterElement(ID_BLOCK_GROUP);
+          let additionsFound = false;
+
+          for (const bgChild of child.children) {
+            if (
+              elementIsOfType(bgChild, ID_BLOCK_ADDITIONS, EbmlMasterElement)
+            ) {
+              additionsFound = true;
+              const newMoreList: EbmlElement[] = [];
+              for (const more of bgChild.children) {
+                if (
+                  elementIsOfType(more, ID_BLOCK_MORE, EbmlMasterElement) &&
+                  isAgtmBlockMore(more)
+                ) {
+                  continue;  // Remove/replace existing AGTM metadata.
+                }
+                newMoreList.push(more);
+              }
+              if (meta) {
+                newMoreList.push(makeAgtmBlockMore(meta));
+              }
+              if (newMoreList.length > 0) {
+                const newAdditions = new EbmlMasterElement(ID_BLOCK_ADDITIONS);
+                newAdditions.children = newMoreList;
+                newBlockGroup.children.push(newAdditions);
+              }
+            } else {
+              newBlockGroup.children.push(bgChild);
+            }
+          }
+
+          if (!additionsFound && meta) {
+            const additions = new EbmlMasterElement(ID_BLOCK_ADDITIONS);
+            additions.children.push(makeAgtmBlockMore(meta));
+            newBlockGroup.children.push(additions);
+          }
+
+          newClusterChildren.push(newBlockGroup);
+        } else {
+          newClusterChildren.push(child);
+        }
+      } else {
+        newClusterChildren.push(child);
+      }
+    }
+
+    cluster.children = newClusterChildren;
+  }
+
+  return writeEbml(webm.ebmlElements);
+}
+
+function muxAgtmMetadataMp4(
   source: ArrayBuffer,
   metadataList: Array<AgtmMetadata | null>,
 ): ArrayBuffer | null {
@@ -414,7 +598,7 @@ export function muxAgtmMetadata(
   const drefBox = new DrefBox('dref');
   dinfBox.children.push(drefBox);
   const urlBox = new UrlBox('url ');
-  urlBox.flags = 1;  // Data is in the same file
+  urlBox.flags = 1; // Data is in the same file
   drefBox.children.push(urlBox);
 
   const stblBox = new StblBox('stbl');
@@ -652,4 +836,29 @@ export function muxAgtmMetadata(
   }
 
   return writeIsobmff(mp4.boxes);
+}
+
+/**
+ * Takes in an AV1 MP4 or WebM file and injects the given AGTM metadata into it.
+ * @param source The source MP4 file as an ArrayBuffer.
+ * @param metadataList The list of AGTM metadata to inject. The index in the
+ *     list corresponds to the index of the frame that the metadata should
+ *     be associated with. Null or missing values mean that the previous
+ *     metadata is repeated.
+ * @returns The modified MP4 file as an ArrayBuffer or null in case of error.
+ */
+export function muxAgtmMetadata(
+  source: ArrayBuffer,
+  metadataList: Array<AgtmMetadata | null>,
+): ArrayBuffer | null {
+  const dataView = new DataView(source);
+  if (dataView.byteLength >= 4 && dataView.getUint32(0, false) === ID_EBML) {
+    const webm = parseWebm(source);
+    if (!webm) {
+      console.error('Error parsing WebM');
+      return null;
+    }
+    return muxAgtmMetadataWebm(source, webm, metadataList);
+  }
+  return muxAgtmMetadataMp4(source, metadataList);
 }

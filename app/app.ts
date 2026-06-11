@@ -1047,7 +1047,6 @@ function onMetadataChanged() {
 function updateSaveAgtmButtons() {
   const isVideo = decodedMedia?.type === 'video';
   const isFromFile = agtmMetadataType === 'fromfile';
-  const isWebm = decodedMedia?.parsedMedia?.containerType === 'webm';
 
   let saveDisabled = false;
   let title = '';
@@ -1057,9 +1056,6 @@ function updateSaveAgtmButtons() {
   } else if (isFromFile) {
     saveDisabled = true;
     title = 'must choose a different metadata type';
-  } else if (isWebm) {
-    saveDisabled = true;
-    title = 'WebM muxing not supported';
   }
   saveStaticAgtmButtonEl.disabled = saveDisabled;
   saveStaticAgtmButtonEl.title = title;
@@ -2350,6 +2346,37 @@ async function waitForPrecomputationAndExport(
   );
 }
 
+/**
+ * Downloads the AGTM metadata muxed into the original video.
+ */
+function downloadAgtmVideo(
+  metadataList: Array<AgtmMetadata | null>,
+  suffix: string,
+) {
+  if (!decodedMedia?.arrayBuffer) return;
+  const muxed = muxAgtmMetadata(decodedMedia.arrayBuffer, metadataList);
+  if (muxed) {
+    const isWebm = decodedMedia?.parsedMedia?.containerType === 'webm';
+    const ext = isWebm ? 'webm' : 'mp4';
+    const mime = isWebm ? 'video/webm' : 'video/mp4';
+    const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_${suffix}.${ext}`;
+    downloadBlob(new Blob([muxed], {type: mime}), filename);
+  }
+}
+
+/**
+ * Downloads the AGTM metadata as a JSON file.
+ */
+function downloadAgtmJson(
+  metadataList: Array<AgtmMetadata | null>,
+  suffix: string,
+) {
+  const json = metadataListToJson(metadataList);
+  const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_${suffix}.json`;
+  const blob = new Blob([json], {type: 'application/octet-stream'});
+  downloadBlob(blob, filename);
+}
+
 // Saves the dynamic AGTM video, when the metadata is in the process of being
 // precomputed.
 async function saveDynamicAgtmVideoWithPrecomputationPromise(
@@ -2362,15 +2389,8 @@ async function saveDynamicAgtmVideoWithPrecomputationPromise(
     cancelDynamicAgtmButtonEl,
     [saveStaticAgtmButtonEl],
     () => {
-      if (dynamicAgtmMetadata && decodedMedia?.arrayBuffer) {
-        const muxed = muxAgtmMetadata(
-          decodedMedia.arrayBuffer,
-          dynamicAgtmMetadata,
-        );
-        if (muxed) {
-          const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_dynamic_agtm.mp4`;
-          downloadBlob(new Blob([muxed], {type: 'video/mp4'}), filename);
-        }
+      if (dynamicAgtmMetadata) {
+        downloadAgtmVideo(dynamicAgtmMetadata, 'dynamic_agtm');
       }
     },
   );
@@ -2389,10 +2409,7 @@ async function saveDynamicAgtmJson() {
       [],
       () => {
         if (dynamicAgtmMetadata) {
-          const json = metadataListToJson(dynamicAgtmMetadata);
-          const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_all.json`;
-          const blob = new Blob([json], {type: 'application/octet-stream'});
-          downloadBlob(blob, filename);
+          downloadAgtmJson(dynamicAgtmMetadata, 'all');
         }
       },
     );
@@ -2406,10 +2423,7 @@ async function saveDynamicAgtmJson() {
   }
 
   if (metadataArray) {
-    const json = metadataListToJson(metadataArray);
-    const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_all.json`;
-    const blob = new Blob([json], {type: 'application/octet-stream'});
-    downloadBlob(blob, filename);
+    downloadAgtmJson(metadataArray, 'all');
     return;
   }
 
@@ -2428,10 +2442,7 @@ async function saveDynamicAgtmJson() {
         [],
         () => {
           if (dynamicAgtmMetadata) {
-            const json = metadataListToJson(dynamicAgtmMetadata);
-            const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_all.json`;
-            const blob = new Blob([json], {type: 'application/octet-stream'});
-            downloadBlob(blob, filename);
+            downloadAgtmJson(dynamicAgtmMetadata, 'all');
           }
         },
       );
@@ -2460,11 +2471,7 @@ async function saveDynamicAgtmVideo() {
   }
 
   if (metadataArray) {
-    const muxed = muxAgtmMetadata(decodedMedia.arrayBuffer, metadataArray);
-    if (muxed) {
-      const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_dynamic_agtm.mp4`;
-      downloadBlob(new Blob([muxed], {type: 'video/mp4'}), filename);
-    }
+    downloadAgtmVideo(metadataArray, 'dynamic_agtm');
     return;
   }
 
@@ -2484,12 +2491,8 @@ async function saveDynamicAgtmVideo() {
 }
 
 function saveStaticAgtmVideo() {
-  if (!decodedMedia?.arrayBuffer || !agtmMetadata) return;
-  const muxed = muxAgtmMetadata(decodedMedia.arrayBuffer, [agtmMetadata]);
-  if (muxed) {
-    const filename = `${basenameWithoutExtension(mediaFilename ?? '')}_agtm.mp4`;
-    downloadBlob(new Blob([muxed], {type: 'video/mp4'}), filename);
-  }
+  if (!agtmMetadata) return;
+  downloadAgtmVideo([agtmMetadata], 'agtm');
 }
 
 async function handleSaveAgtmVideoClick(isDynamic: boolean) {
