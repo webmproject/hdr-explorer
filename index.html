@@ -32,6 +32,13 @@
         <input type="file" id="UploadButton" style="display: none" />
         <input type="file" id="JsonUpload" accept=".json" style="display: none" />
         <button type="button" id="UploadButtonFake">Upload Image/Video</button>
+        <span class="tooltip">
+          <span class="tooltip-trigger">?</span>
+          <span class="tooltip-text">
+            Upload your own content, or use one of the presets from the dropdown.
+            You can also drag and drop files onto the window.
+          </span>
+        </span>
       <label for="Content">
         <button class="small-button" id="BrowseContentButton" title="Browse content visually">
           Select Content 🖼️
@@ -78,6 +85,9 @@
       <div class="flex-filler"></div>
       <div id="ui-buttons-container">
         <span id="Warnings" style="font-weight: bold" hidden></span>
+        <a href="https://github.com/webmproject/hdr-explorer/blob/main/USAGE.md" target="_blank">
+          <input type="button" id="HelpUi" value="User Guide" />
+        </a>
         <a href="https://github.com/webmproject/hdr-explorer" target="_blank" style="text-decoration: none">
           <button type="button" title="View on GitHub" style="display: flex; align-items: center">
             <svg width="20" height="20" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" style="min-width: 20px">
