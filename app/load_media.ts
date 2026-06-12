@@ -287,18 +287,6 @@ export async function decodeMedia(
   });
 }
 
-function getCarriage(parsed: ParsedMedia, sourceTrackId: number): string {
-  const sourceTrack = parsed.tracks[sourceTrackId];
-  if (sourceTrack) {
-    if (sourceTrack.handlerType === 'vide') {
-      return 'video bitstream';
-    } else if (sourceTrack.handlerType === 'meta') {
-      return `${sourceTrack.codec} metadata track`;
-    }
-  }
-  return 'unknown';
-}
-
 export function getMediaInfoString(media: DecodedMedia): string {
   let info = '';
 
@@ -338,21 +326,16 @@ export function getMediaInfoString(media: DecodedMedia): string {
       hasMetadata = true;
       const meta = parsed.hdrMetadata[trackId][type];
       const sourceTrack = parsed.tracks[meta.sourceTrackId];
-      const carriage = getCarriage(parsed, meta.sourceTrackId);
       info += `Metadata: ${type}`;
       if (type === 'CICP') {
         info += ` ${meta.colourPrimaries}/${meta.transferCharacteristics}/${meta.matrixCoefficients}\n`;
       } else {
-        info += ` (from ${carriage}), ${meta.frames.length} samples\n`;
+        info += ` (from ${meta.source}), ${meta.frames.length} samples\n`;
         if (meta.overridenMetadata) {
           const overriddenMeta = meta.overridenMetadata;
           const overridenMetaTrack =
             parsed.tracks[overriddenMeta.sourceTrackId];
-          const overridenMetaCarriage = getCarriage(
-            parsed,
-            overriddenMeta.sourceTrackId,
-          );
-          info += `Metadata: ${type} (from ${overridenMetaCarriage}) [ignored in favor of container metadata], ${overriddenMeta.frames.length} samples\n`;
+          info += `Metadata: ${type} (from ${overriddenMeta.source}) [ignored in favor of container metadata], ${overriddenMeta.frames.length} samples\n`;
         }
       }
     }

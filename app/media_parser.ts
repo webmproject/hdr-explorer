@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import {AgtmMetadata, Altr, ComponentMix, Point2} from './color_helpers/agtm';
 import {parseAgtm} from './agtm_parser';
 import {Bitstream} from './bitstream';
+import {AgtmMetadata, Altr, ComponentMix, Point2} from './color_helpers/agtm';
 import {Hdr10pMetadata, Hdr10pWindow} from './color_helpers/hdr10p';
 import {clamp} from './color_helpers/math_helpers';
 import {pchipInterpolationSlopes} from './color_helpers/pchip';
@@ -29,7 +29,6 @@ import {
   CttsBox,
   EdtsBox,
   ElstBox,
-  findBox,
   HdlrBox,
   HvcCBox,
   It35PayloadBox,
@@ -41,7 +40,6 @@ import {
   MetaBox,
   MoovBox,
   MvhdBox,
-  parseIsobmff,
   StblBox,
   StcoBox,
   StscBox,
@@ -53,6 +51,8 @@ import {
   TrackReferenceTypeBox,
   TrakBox,
   TrefBox,
+  findBox,
+  parseIsobmff,
 } from './isobmff';
 import {
   EbmlBinaryElement,
@@ -61,7 +61,6 @@ import {
   EbmlMasterElement,
   EbmlStringElement,
   EbmlUintElement,
-  bigintToNumber,
   ID_BLOCK,
   ID_BLOCK_ADDITIONAL,
   ID_BLOCK_ADDITIONS,
@@ -74,10 +73,10 @@ import {
   ID_CODEC_ID,
   ID_COLOUR,
   ID_COLOUR_MATRIX,
-  ID_DEFAULT_DURATION,
   ID_COLOUR_PRIMARIES,
   ID_COLOUR_RANGE,
   ID_COLOUR_TRANSFER,
+  ID_DEFAULT_DURATION,
   ID_INFO,
   ID_REFERENCE_BLOCK,
   ID_SEGMENT,
@@ -88,9 +87,10 @@ import {
   ID_TRACK_NUMBER,
   ID_TRACK_TYPE,
   ID_VIDEO,
+  bigintToNumber,
+  elementIsOfType,
   findEbmlElement,
   parseEbml,
-  elementIsOfType
 } from './webm';
 
 interface T35Data {
@@ -121,7 +121,6 @@ interface SEIMessage {
   payloadSize: number;
   payload: SEIPayload;
 }
-
 
 interface VUI {
   colourPrimaries?: number;
@@ -256,6 +255,8 @@ export interface HdrMetadataForTrack {
   frames: FrameMetadata[]; // Sorted by presentationTimeSec.
   // The track ID of containing this metadata.
   sourceTrackId: number;
+  // Human readable source of this metadata (e.g. bitstream, t35 track, mebx...)
+  source: string;
   colourPrimaries?: number;
   transferCharacteristics?: number;
   matrixCoefficients?: number;
@@ -356,8 +357,8 @@ interface OBU {
 
 export interface ParsedMedia {
   containerType: 'mp4' | 'webm';
-  boxes: Box[];  // For mp4.
-  ebmlElements: EbmlElement[];  // For webm.
+  boxes: Box[]; // For mp4.
+  ebmlElements: EbmlElement[]; // For webm.
   tracks: {[trackId: string]: Track};
   numKeyframes: number;
   hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}};
@@ -852,6 +853,7 @@ function getOrAddHdrMetadata(
   hdrMetadata: {[trackId: number]: {[type: string]: HdrMetadataForTrack}},
   videoTrackId: number,
   type: HdrMetadataType,
+  source: string,
   metadataSourceTrackId?: number,
 ): HdrMetadataForTrack {
   if (!hdrMetadata[videoTrackId]) {
@@ -863,6 +865,7 @@ function getOrAddHdrMetadata(
     hdrMetadata[videoTrackId][type] = {
       name: type,
       frames: [],
+      source,
       sourceTrackId,
       overridenMetadata: existing,
     };
@@ -983,12 +986,14 @@ class MP4Parser {
   getOrAddHdrMetadata(
     videoTrackId: number,
     type: HdrMetadataType,
+    source: string,
     metadataSourceTrackId?: number,
   ): HdrMetadataForTrack {
     return getOrAddHdrMetadata(
       this.hdrMetadata,
       videoTrackId,
       type,
+      source,
       metadataSourceTrackId,
     );
   }
@@ -1036,6 +1041,7 @@ class MP4Parser {
                 this.getOrAddHdrMetadata(
                   track.id,
                   itutT35Payload.payload.metadataType,
+                  'bitstream (metadata OBU)',
                 ).frames.push({
                   presentationTimeSec: sample.presentationTimeSec,
                   agtm: itutT35Payload.payload.agtm,
@@ -1053,13 +1059,21 @@ class MP4Parser {
           const nalus = naluParser.parse(sample.data);
           nalus.forEach((nalu) => {
             if (nalu.hdr10p) {
-              this.getOrAddHdrMetadata(track.id, 'HDR10+').frames.push({
+              this.getOrAddHdrMetadata(
+                track.id,
+                'HDR10+',
+                'bitstream (SEI NALU)',
+              ).frames.push({
                 presentationTimeSec: sample.presentationTimeSec,
                 hdr10p: nalu.hdr10p,
               });
             }
             if (nalu.agtm) {
-              this.getOrAddHdrMetadata(track.id, 'AGTM').frames.push({
+              this.getOrAddHdrMetadata(
+                track.id,
+                'AGTM',
+                'bitstream (SEI NALU)',
+              ).frames.push({
                 presentationTimeSec: sample.presentationTimeSec,
                 agtm: nalu.agtm,
               });
@@ -1081,7 +1095,13 @@ class MP4Parser {
         combinedData.set(t35Identifier, 0);
         combinedData.set(sample.data, t35Identifier.length);
         const t35 = parseT35(combinedData);
-        this.updateHdrMetadataFromT35(t35, track.id, track.box, sample);
+        this.updateHdrMetadataFromT35(
+          t35,
+          track.id,
+          track.box,
+          sample,
+          'it35 track',
+        );
       });
     } else if (track.handlerType === 'meta' && track.codec === 'mebx') {
       const keysBox = track.box?.getDescendant('keys', KeysBox);
@@ -1169,7 +1189,13 @@ class MP4Parser {
           combinedData.set(t35Identifier, 0);
           combinedData.set(t35Payload, t35Identifier.length);
           const t35 = parseT35(combinedData);
-          this.updateHdrMetadataFromT35(t35, track.id, track.box, sample);
+          this.updateHdrMetadataFromT35(
+            t35,
+            track.id,
+            track.box,
+            sample,
+            'mebx track',
+          );
           sampleOffset += size;
         }
       });
@@ -1179,8 +1205,9 @@ class MP4Parser {
   private updateHdrMetadataFromT35(
     t35: T35Data,
     metadataTrackId: number,
-    metadataTrackBox: TrakBox|undefined,
+    metadataTrackBox: TrakBox | undefined,
     sample: Sample,
+    source: string,
   ): void {
     const tref = metadataTrackBox?.getChild('tref', TrefBox);
     const trefChildBox =
@@ -1214,6 +1241,7 @@ class MP4Parser {
         this.getOrAddHdrMetadata(
           trackId,
           t35.metadataType,
+          `MP4 container (${source})`,
           metadataTrackId,
         ).frames.push({
           presentationTimeSec,
@@ -1253,7 +1281,11 @@ class MP4Parser {
             vui.transferCharacteristics !== undefined &&
             vui.matrixCoefficients !== undefined
           ) {
-            const cicp = this.getOrAddHdrMetadata(trackId, 'CICP');
+            const cicp = this.getOrAddHdrMetadata(
+              trackId,
+              'CICP',
+              'HEVC config NALU',
+            );
             cicp.colourPrimaries = vui.colourPrimaries;
             cicp.transferCharacteristics = vui.transferCharacteristics;
             cicp.matrixCoefficients = vui.matrixCoefficients;
@@ -1522,7 +1554,11 @@ class MP4Parser {
         typeof transferCharacteristics === 'number' &&
         typeof matrixCoefficients === 'number'
       ) {
-        const cicp = this.getOrAddHdrMetadata(trackId, 'CICP');
+        const cicp = this.getOrAddHdrMetadata(
+          trackId,
+          'CICP',
+          'MP4 container (colr box)',
+        );
         cicp.colourPrimaries = colourPrimaries;
         cicp.transferCharacteristics = transferCharacteristics;
         cicp.matrixCoefficients = matrixCoefficients;
@@ -1822,7 +1858,8 @@ export function getAverageFramerate(parsedMp4: ParsedMedia): number | null {
     const numSamples = videoTrack.samples.length;
     if (numSamples === 0) return null;
     const lastSample = videoTrack.samples[numSamples - 1];
-    const durationSec = lastSample.presentationTimeSec + lastSample.presentationDurationSec;
+    const durationSec =
+      lastSample.presentationTimeSec + lastSample.presentationDurationSec;
     return durationSec > 0 ? numSamples / durationSec : null;
   }
   const mdhd = videoTrack.box.getDescendant('mdhd', MdhdBox);
@@ -2025,10 +2062,14 @@ class WebmParser {
         const trackNum = bigintToNumber(
           trackEntry.getChild(ID_TRACK_NUMBER, EbmlUintElement)?.value,
         );
-        const trackType = (trackEntry.getChild(ID_TRACK_TYPE, EbmlUintElement))
-          ?.value;
-        const codecId = (trackEntry.getChild(ID_CODEC_ID, EbmlStringElement))
-          ?.value;
+        const trackType = trackEntry.getChild(
+          ID_TRACK_TYPE,
+          EbmlUintElement,
+        )?.value;
+        const codecId = trackEntry.getChild(
+          ID_CODEC_ID,
+          EbmlStringElement,
+        )?.value;
         const defaultDurationNs = bigintToNumber(
           trackEntry.getChild(ID_DEFAULT_DURATION, EbmlUintElement)?.value,
         );
@@ -2067,7 +2108,9 @@ class WebmParser {
                   : 'unknown',
             handlerType: mkvTrackTypeToMp4Handler(bigintToNumber(trackType)),
             timescale: 1e9 / timecodeScale,
-            defaultDuration: defaultDurationNs ? (defaultDurationNs / timecodeScale) : undefined,
+            defaultDuration: defaultDurationNs
+              ? defaultDurationNs / timecodeScale
+              : undefined,
           };
 
           if (
@@ -2075,7 +2118,12 @@ class WebmParser {
             transfer !== undefined &&
             matrix !== undefined
           ) {
-            const cicp = getOrAddHdrMetadata(this.hdrMetadata, trackNum, 'CICP');
+            const cicp = getOrAddHdrMetadata(
+              this.hdrMetadata,
+              trackNum,
+              'CICP',
+              'WebM container (video EBML)',
+            );
             cicp.colourPrimaries = primaries;
             cicp.transferCharacteristics = transfer;
             cicp.matrixCoefficients = matrix;
@@ -2086,15 +2134,19 @@ class WebmParser {
 
     // Parse Clusters for samples
     for (const cluster of segment.children) {
-      if (!elementIsOfType(cluster, ID_CLUSTER, EbmlMasterElement))
-        continue;
+      if (!elementIsOfType(cluster, ID_CLUSTER, EbmlMasterElement)) continue;
       let clusterTimecode = 0;
       const ct = cluster.getChild(ID_CLUSTER_TIMECODE, EbmlUintElement);
       if (ct) clusterTimecode = bigintToNumber(ct.value) ?? 0;
 
       for (const child of cluster.children) {
         if (elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement)) {
-          this.processBlock(child, clusterTimecode, timecodeScale, bigintToNumber(child.trackNum) ?? 0);
+          this.processBlock(
+            child,
+            clusterTimecode,
+            timecodeScale,
+            bigintToNumber(child.trackNum) ?? 0,
+          );
         } else if (elementIsOfType(child, ID_BLOCK_GROUP, EbmlMasterElement)) {
           const block = child.getChild(ID_BLOCK, EbmlBlockElement);
           const trackNum = bigintToNumber(block?.trackNum);
@@ -2103,8 +2155,13 @@ class WebmParser {
               child.getChild(ID_BLOCK_DURATION, EbmlUintElement)?.value,
             );
             const additions = child.getChild(
-              ID_BLOCK_ADDITIONS, EbmlMasterElement);
-            const referenceBlock = child.getChild(ID_REFERENCE_BLOCK, EbmlUintElement);
+              ID_BLOCK_ADDITIONS,
+              EbmlMasterElement,
+            );
+            const referenceBlock = child.getChild(
+              ID_REFERENCE_BLOCK,
+              EbmlUintElement,
+            );
             const isKeyframe = referenceBlock === null;
 
             this.processBlock(
@@ -2114,7 +2171,7 @@ class WebmParser {
               trackNum,
               duration,
               additions ?? undefined,
-              isKeyframe
+              isKeyframe,
             );
           }
         }
@@ -2137,10 +2194,10 @@ class WebmParser {
     trackId: number,
     duration?: number,
     additions?: EbmlMasterElement,
-    isKeyframeInferred?: boolean
+    isKeyframeInferred?: boolean,
   ) {
     const presentationTimeNanos =
-      ((clusterTimecode + block.timecode) * timecodeScale);
+      (clusterTimecode + block.timecode) * timecodeScale;
     const presentationTimeSec = presentationTimeNanos / 1e9;
     const sample: Sample = {
       id: this.tracks[trackId].samples.length,
@@ -2156,9 +2213,7 @@ class WebmParser {
       duration: duration ?? 0,
       cts: clusterTimecode + block.timecode,
       presentationTimeSec,
-      presentationDurationSec: duration
-        ? (duration * timecodeScale) / 1e9
-        : 0,
+      presentationDurationSec: duration ? (duration * timecodeScale) / 1e9 : 0,
     };
 
     if (additions) {
@@ -2168,8 +2223,9 @@ class WebmParser {
           const addId = bigintToNumber(
             more.getChild(ID_BLOCK_ADD_ID, EbmlUintElement)?.value,
           );
-          const addData = (
-            more.getChild(ID_BLOCK_ADDITIONAL, EbmlBinaryElement)
+          const addData = more.getChild(
+            ID_BLOCK_ADDITIONAL,
+            EbmlBinaryElement,
           )?.data;
           if (addId !== undefined && addData) {
             webmBlockAdditions.push({id: addId, data: addData});
@@ -2180,7 +2236,8 @@ class WebmParser {
                 const meta = getOrAddHdrMetadata(
                   this.hdrMetadata,
                   trackId,
-                  t35.metadataType
+                  t35.metadataType,
+                  'WebM block additions',
                 );
                 meta.frames.push({
                   presentationTimeSec,
@@ -2236,14 +2293,16 @@ class WebmParser {
 
       const lastIdx = samples.length - 1;
       if (samples[lastIdx].duration === 0) {
-        samples[lastIdx].duration = Math.round((lastDurationSec * 1e9) / timecodeScale);
+        samples[lastIdx].duration = Math.round(
+          (lastDurationSec * 1e9) / timecodeScale,
+        );
       }
       if (samples[lastIdx].presentationDurationSec === 0) {
         samples[lastIdx].presentationDurationSec = lastDurationSec;
       }
     }
     track.samplesSortedByPresentationTime = [...samples].sort(
-      (a, b) => a.presentationTimeSec - b.presentationTimeSec
+      (a, b) => a.presentationTimeSec - b.presentationTimeSec,
     );
   }
 }
