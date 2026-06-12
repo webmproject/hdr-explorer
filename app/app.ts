@@ -1127,6 +1127,8 @@ function resetMetadataOverrides() {
   customGainApplicationSpaceChromaticitiesHash = null;
   curvePointsOverridden = false;
   setHashes({
+    'tf': null,
+    'pri': null,
     'ref_white': null,
     'max_comp': null,
     'gain_pri': null,
