@@ -221,9 +221,12 @@ export async function decodeMediaWithCallback(
       extension === 'png'
     ) {
       fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
+      // Assume sRGB for JPEG and PNG.
+      // But ideally we should check if there is an ICC profile or a cICP chunk
+      // in the PNG.
       metadata = {
-        transferCharacteristics: 0,
-        colourPrimaries: 0,
+        transferCharacteristics: 13,
+        colourPrimaries: 1,
         hdr10pMetadata: null,
         hdr10pMetadataText: null,
         agtmMetadata: null,

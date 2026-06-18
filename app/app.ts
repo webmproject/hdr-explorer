@@ -1610,20 +1610,12 @@ async function loadSelectedContent() {
   }
   const selectedOption = contentSelectEl.options[contentSelectEl.selectedIndex];
   const optgroup = selectedOption.parentElement as HTMLOptGroupElement;
-  const inputHasGainmap = optgroup.label === 'JPG+gain map';
 
   resetMedia();
-  if (inputHasGainmap) {
-    // TODO(vrabaud): parse the transfer function and primaries from the file
-    // name or content.
-    contentTransfer = kTransferSrgb;
-    contentPrimaries = kPrimariesSRGB;
-  } else {
-    // Default tranfser/primaries. These get overridden in onFrameChanged() if
-    // we can parse them from the file.
-    contentTransfer = kTransferPQ;
-    contentPrimaries = kPrimariesRec2020;
-  }
+  // Default tranfser/primaries. These get overridden in onFrameChanged() if
+  // we can parse them from the file.
+  contentTransfer = kTransferPQ;
+  contentPrimaries = kPrimariesRec2020;
   signalTransferEl.value = contentTransfer.toString();
   signalPrimariesEl.value = contentPrimaries.toString();
 
