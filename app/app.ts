@@ -2121,8 +2121,8 @@ async function generateDynamicMetadata(
         progressCallback(i, framesToProcess);
       }
 
-      const sample = videoTrack.samples[i];
-      const time = sample.dts / videoTrack.timescale;
+      const sample = videoTrack.samplesSortedByPresentationTime[i];
+      const time = sample.presentationTimeSec;
 
       await new Promise<void>((resolve) => {
         tempVideo.onseeked = () => {
