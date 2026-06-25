@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+import {
+  AgtmMetadataType,
+  getAgtmGeneratorVersion,
+  kAgtmMetadataTypeNames,
+  kDefaultAgtmMetadataType,
+} from './agtm_metadata_types';
 import {kDefaultMetadata} from './builtin_agtm';
 import {AgtmMetadata, ComponentMix, Point2} from './color_helpers/agtm';
 import {QuadraticBezier} from './color_helpers/bezier';
@@ -29,12 +35,6 @@ import {linearToLogGain, logGainToLinear} from './color_helpers/gain_curve';
 import {clamp, exp2} from './color_helpers/math_helpers';
 import {PiecewiseLinear} from './color_helpers/piecewise_linear';
 import {ComputedStats, getPercentile, ImageStats} from './image_stats';
-import {
-  AgtmMetadataType,
-  getAgtmGeneratorVersion,
-  kAgtmMetadataTypeNames,
-  kDefaultAgtmMetadataType,
-} from './agtm_metadata_types';
 
 function jzOetfSlope(nits: number) {
   const normalized = nits / 10000;
@@ -427,11 +427,20 @@ type HistogramBaseTmoFactory = (
   numCurves: number,
 ) => ToneMappingOperator;
 
+/**
+ * Generates AGTM metadata from a given base tone mapping operator, adjusting
+ * the curve based on the histogram of the input image.
+ * `baseWeight` determines how much to adjust the base curve based on the
+ * histogram. A smaller weight means that the curve is more similar to
+ * the base curve. A higher weight (which can be above 1) changes it more,
+ * and eventually makes it tend towards a simple clipping curve
+ * (linear y=x up to targetHeadroomLinear then clip).
+ */
 function generateHistogramBased(
   stats: ComputedStats,
-  isRwtmo: boolean,
   baseTmoFactory: HistogramBaseTmoFactory,
-  weight: number,
+  isRwtmo: boolean,
+  baseWeight: number,
   referenceWhiteOverride?: number,
   baselineHeadroomLinearOverride?: number,
 ): AgtmMetadata {
@@ -455,19 +464,22 @@ function generateHistogramBased(
   const bins = stats.bins.filter(
     (bin) => bin.binMax / referenceWhite < contentHeadroomLinear,
   );
+
+  // Knee point: do not adjust bins smaller than this (just keep the base tone
+  // mapping).
+  const kMinXToAdjust = 0.05; // SDR relative value
+
   // Average 'freq' accross all adjusted bins.
   // Note that this is influenced by the size of the buckets which is not
   // uniform, see kGamma in image_stats.ts.
   const c = 3; // luma channel
-  // Knee point sort of: do not adjust bins smaller than this (just keep the
-  // base tone mapping).
-  const kMinXToAdjust = 0.05;
-  const avgFreq =
-    bins
-      .map((bin) =>
-        bin.binMax / referenceWhite > kMinXToAdjust ? bin.freq[c] : 0,
-      )
-      .reduce((a, b) => a + b, 0) / bins.length;
+  const adjustedBins = bins.filter(
+    (bin) => bin.binMax / referenceWhite > kMinXToAdjust,
+  );
+  const avgFreq = adjustedBins.length > 0
+    ? adjustedBins.map((bin) => bin.freq[c]).reduce((a, b) => a + b, 0) /
+      adjustedBins.length
+    : 0;
 
   // Half luma and half maxRGB.
   // Combines the advantages of luma (tone mapping based on actual luminance)
@@ -479,11 +491,6 @@ function generateHistogramBased(
     channel: 0,
   };
 
-  // Weight determining how much to adjust the base curve based on the
-  // histogram. A smaller weight means that the curve is more similar to
-  // the base curve. A higher weight (which can be above 1) changes it more,
-  // and eventually makes it tend towards a simply clipping curve
-  // (linear y=x up to targetHeadroomLinear then clip).
   for (let iCurve = 0; iCurve < numCurves; ++iCurve) {
     const targetHeadroomLinear = isRwtmo
       ? computeRwtmoTargetHeadroomLinear(
@@ -503,8 +510,7 @@ function generateHistogramBased(
     // Create one control point per bin.
     const points: Point2[] = [{x: 0, y: 0}];
     let cumulatedChange = 0;
-    for (let i = 0; i < bins.length; ++i) {
-      const bin = bins[i];
+    for (const bin of bins) {
       const binMax = bin.binMax / referenceWhite;
       const x = binMax;
 
@@ -512,33 +518,32 @@ function generateHistogramBased(
       // make smaller changes. Use the slope of the Jz transfer curve (which is
       // supposed to be perceptually linear) to guide the amount of change.
       const slope = jzOetfSlope(x * referenceWhite);
-      // Lower slope => larger change, capped to a max of 5x.
+      // Lower slope => larger change.
       const slopeDerivedWeight = clamp(10 / slope, 0, 10); // Empirical formula.
+      const weight = baseWeight * slopeDerivedWeight;
 
       const change = binMax > kMinXToAdjust ? bin.freq[c] - avgFreq : 0;
-
       cumulatedChange += change;
 
       const baseY = baseCurve.evaluate(x);
-      let y = baseY;
-      y += cumulatedChange * weight * slopeDerivedWeight;
+      let y = baseY + cumulatedChange * weight;
       // Make sure the curve is monotonic.
       let minY = 0;
       if (points.length > 0) {
         const kMinSlope = 1e-3;
-        minY =
-          points[points.length - 1].y +
-          kMinSlope * (x - points[points.length - 1].x);
+        const prevPoint = points[points.length - 1];
+        minY = prevPoint.y + kMinSlope * (x - prevPoint.x);
       }
       if (y < minY) {
-        cumulatedChange = Math.max(change, 0);
         y = minY;
+        // Set cumulatedChange so that yMin = baseY + cumulatedChange * weight
+        cumulatedChange = weight > 1e-6 ? (minY - baseY) / weight : 0;
       }
 
       points.push({x, y});
     }
     const maxY = points[points.length - 1].y;
-    if (maxY >= targetHeadroomLinear) {
+    if (maxY > targetHeadroomLinear) {
       // Rescale the curve to make sure it does not go over the targetHeadroomLinear.
       // The rescaling is done in PQ space.
       const linearToPq = (v: number) =>
@@ -548,7 +553,7 @@ function generateHistogramBased(
 
       const pqMaxY = linearToPq(maxY);
       const pqtargetHeadroomLinear = linearToPq(targetHeadroomLinear);
-      const pqScale = pqtargetHeadroomLinear / pqMaxY;
+      const pqScale = pqMaxY > 0 ? pqtargetHeadroomLinear / pqMaxY : 1;
 
       for (let i = 0; i < points.length; ++i) {
         const pqY = linearToPq(points[i].y);
@@ -782,8 +787,8 @@ export async function getAgtm(
         new LinearToneMapper(chL, thL);
       return generateHistogramBased(
         stats,
-        /*isRwtmo=*/ false,
         linearFactory,
+        /*isRwtmo=*/ false,
         /*weight=*/ 0.5,
         hdrReferenceWhite,
         baselineHeadroomLinear,
@@ -796,8 +801,8 @@ export async function getAgtm(
       };
       return generateHistogramBased(
         stats,
-        /*isRwtmo=*/ true,
         rwtmoFactory,
+        /*isRwtmo=*/ true,
         /*weight=*/ 0.1,
         hdrReferenceWhite,
         baselineHeadroomLinear,
@@ -807,14 +812,14 @@ export async function getAgtm(
     case AgtmMetadataType.HISTOGRAM_BASED_CHROME_203: {
       const chromeReferenceWhite =
         type === AgtmMetadataType.HISTOGRAM_BASED_CHROME_203
-          ? hdrReferenceWhite ?? 203
+          ? (hdrReferenceWhite ?? 203)
           : hdrReferenceWhite;
       const chromeFactory: HistogramBaseTmoFactory = (chL, thL, i, n) =>
         new ChromeToneMapper(chL, thL);
       return generateHistogramBased(
         stats,
-        /*isRwtmo=*/ false,
         chromeFactory,
+        /*isRwtmo=*/ false,
         /*weight=*/ 0.1,
         chromeReferenceWhite,
         baselineHeadroomLinear,
