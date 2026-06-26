@@ -34,20 +34,20 @@ export const TEST_FILES: TestFileGroup[] = [
     label: 'HLG',
     files: [
       {
-        path: 'beach_av1_hlg10_hdr10p.mp4',
-        title: 'Beach | Pixel 10 | AV1 HDR10+ (HLG)',
+        path: 'beach_av1_hlg10.mp4',
+        title: 'Beach | Pixel 10 | AV1 (HLG)',
       },
       {
-        path: 'lightsaber_av1_hlg10_hdr10p.mp4',
-        title: 'Lightsaber | Pixel 10 | AV1 HDR10+ (HLG)',
+        path: 'lightsaber_av1_hlg10.mp4',
+        title: 'Lightsaber | Pixel 10 | AV1 (HLG)',
       },
       {
-        path: 'lego_hlg_hdr10p.mp4',
-        title: 'Lego | Pixel 10 | AV1 HDR10+ (HLG)',
+        path: 'lego_hlg.mp4',
+        title: 'Lego | Pixel 10 | AV1 (HLG)',
       },
       {
-        path: 'fountain_hlg_hdr10p.mp4',
-        title: 'Fountain | iPhone 16 | AV1 HDR10+ (HLG)',
+        path: 'fountain_hlg.mp4',
+        title: 'Fountain | iPhone 16 | AV1 (HLG)',
       },
     ],
   },

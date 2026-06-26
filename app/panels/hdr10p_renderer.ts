@@ -482,25 +482,9 @@ export class Hdr10pRenderer extends BaseWebgl2Renderer {
           this.gl.getUniformLocation(this.program, 'knee_point_y'),
           this.metadata.windows[0].knee_point_y,
         );
-        let distributionValues08 =
-          this.metadata.windows[0].distribution_values[8];
-        // Hack: for HLG videos where HDR10+ metadata was added with Samsung's tool,
-        // the distribution values seem nonsensical and all the sample videos we have
-        // have the value of 40243, which would presumably mean 402.43 nits
-        // (assuming 100k maps to a max value of 1000 nits), or maybe 4k nits
-        // (assuming a max value of 10000 nits which would be more appropriate for PQ).
-        // 4k doesn't make sense for HLG and 400 is lower than the
-        // targeted_system_display_maximum_luminance of 500 nits that the same tool
-        // sets so it causes the rendering algorithm to misbehave.
-        if (
-          this.contentTransfer === kTransferHLG &&
-          distributionValues08 === 40243
-        ) {
-          distributionValues08 = 1000.0 * 100.0; // Use HLG max instead (assuming L_w = 1000 nits)
-        }
         this.gl.uniform1f(
           this.gl.getUniformLocation(this.program, 'distribution_values_0_8'),
-          distributionValues08,
+          this.metadata.windows[0].distribution_values[8],
         );
         this.gl.uniform1i(
           this.gl.getUniformLocation(this.program, 'num_bezier_anchors'),
