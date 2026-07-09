@@ -24,7 +24,7 @@ import {DEFAULT_FILE, TEST_FILES} from './test_files';
 
 import {AgtmMetadata, ComponentMix} from './color_helpers/agtm';
 import {LutInputColorSpaceMode, LutOptions, LutType, SamplingType,} from './color_helpers/agtm_adapt';
-import {getChromaticities, kPrimariesRec2020, kPrimariesSRGB, kTransferPQ, kTransferSrgb,} from './color_helpers/color_functions';
+import {getChromaticities, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB,} from './color_helpers/color_functions';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {exp2} from './color_helpers/math_helpers';
 import {basenameWithoutExtension, download, downloadApng, downloadBlob,} from './download';
@@ -117,8 +117,8 @@ const statsModesEl = getHTMLElement('StatsModes');
 const logNitsEl = getInputElement('StatsLogNits');
 const logPercentEl = getInputElement('StatsLogPercent');
 
-let contentTransfer: number = kTransferPQ;
-let contentPrimaries: number = kPrimariesRec2020;
+let contentTransfer: number = TRANSFER_PQ;
+let contentPrimaries: number = PRIMARIES_REC2020;
 
 interface Zoomable {
   setZoomPan(zoom: number, panX: number, panY: number): void;
@@ -991,7 +991,7 @@ function applyGainApplicationSpacePrimaries(metadata: AgtmMetadata) {
     metadata.gain_application_space_chromaticities =
       metadata.gain_application_space_chromaticities ??
       customGainApplicationSpaceChromaticitiesHash ??
-      getChromaticities(kPrimariesRec2020);
+      getChromaticities(PRIMARIES_REC2020);
   }
 }
 
@@ -1614,8 +1614,8 @@ async function loadSelectedContent() {
   resetMedia();
   // Default tranfser/primaries. These get overridden in onFrameChanged() if
   // we can parse them from the file.
-  contentTransfer = kTransferPQ;
-  contentPrimaries = kPrimariesRec2020;
+  contentTransfer = TRANSFER_PQ;
+  contentPrimaries = PRIMARIES_REC2020;
   signalTransferEl.value = contentTransfer.toString();
   signalPrimariesEl.value = contentPrimaries.toString();
 

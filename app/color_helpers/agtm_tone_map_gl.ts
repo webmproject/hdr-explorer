@@ -30,7 +30,7 @@ import {
   getChromaticities,
   getLumaCoeffs,
   getMaxNits,
-  kPrimariesP3,
+  PRIMARIES_P3,
 } from './color_functions';
 import {exp2} from './math_helpers';
 
@@ -491,7 +491,7 @@ export class AgtmToneMapper {
         ? getChromaticities(gainPrimaries)
         : gainPrimaries;
     if (hardwareConstrainedMode) {
-      gainChromaticities = getChromaticities(kPrimariesP3);
+      gainChromaticities = getChromaticities(PRIMARIES_P3);
     }
 
     gl.uniform4f(
@@ -524,7 +524,7 @@ export class AgtmToneMapper {
       lutOptions.inputColorSpaceMode === 'content'
         ? contentPrimaries
         : lutOptions.inputColorSpaceMode === 'p3'
-          ? kPrimariesP3
+          ? PRIMARIES_P3
           : gainChromaticities;
 
     const lumaCoeffs = getLumaCoeffs(inputPrimaries);

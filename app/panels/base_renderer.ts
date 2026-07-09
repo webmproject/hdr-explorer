@@ -15,7 +15,7 @@
  */
 
 import {Point2} from '../color_helpers/agtm';
-import {kPrimariesP3, kTransferSrgb} from '../color_helpers/color_functions';
+import {PRIMARIES_P3, TRANSFER_SRGB} from '../color_helpers/color_functions';
 import '../global_interfaces';
 import {Renderer} from './renderer';
 
@@ -83,8 +83,8 @@ export abstract class BaseWebgl2Renderer implements Renderer {
   private indicesBuffer: WebGLBuffer | null = null;
   protected headroomLog2 = 0;
   protected presentationDisplayPeakLuminance = 400;
-  protected readonly framebufferPrimaries = kPrimariesP3;
-  protected readonly framebufferTransfer = kTransferSrgb;
+  protected readonly framebufferPrimaries = PRIMARIES_P3;
+  protected readonly framebufferTransfer = TRANSFER_SRGB;
   protected tex: WebGLTexture | null = null;
   protected texW = 0;
   protected texH = 0;

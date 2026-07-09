@@ -16,7 +16,6 @@
 
 import {
   kColorFunctionGlsl,
-  kTransferHLG,
 } from '../color_helpers/color_functions';
 import {Hdr10pMetadata} from '../color_helpers/hdr10p';
 import {exp2} from '../color_helpers/math_helpers';

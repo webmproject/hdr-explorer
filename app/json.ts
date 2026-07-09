@@ -18,7 +18,7 @@ import {AgtmMetadata} from './color_helpers/agtm';
 import {
   CHROMATICITIES_REC2020,
   getChromaticities,
-  kPrimariesRec2020
+  PRIMARIES_REC2020
 } from './color_helpers/color_functions';
 
 /**
@@ -75,7 +75,7 @@ function mapToStandardFormat(metadata: AgtmMetadata): StandardAgtmFormat {
 
   const chromaticities = metadata.gain_application_space_chromaticities ??
       getChromaticities(metadata.gain_application_space_primaries ??
-                        kPrimariesRec2020);
+                        PRIMARIES_REC2020);
   standard.headroomAdaptiveToneMap = {
     baselineHdrHeadroom: metadata.baseline_hdr_headroom,
     gainApplicationChromaticities: chromaticities,
@@ -227,7 +227,7 @@ function jsonToMetadataOld(
     gain_application_space_primaries:
       (parsedJson.gain_application_space_primaries as number | undefined) ??
       (parsedJson.gain_application_space_chromaticities === undefined
-        ? kPrimariesRec2020 // Defaults to Rec. 2020 primaries if neither is provided.
+        ? PRIMARIES_REC2020 // Defaults to Rec. 2020 primaries if neither is provided.
         : undefined),
     gain_application_space_chromaticities:
       parsedJson.gain_application_space_chromaticities as number[] | undefined,

@@ -16,9 +16,9 @@
 
 import {
   getMaxNits,
-  kTransferHLG,
-  kTransferPQ,
-  kTransferSrgb,
+  TRANSFER_HLG,
+  TRANSFER_PQ,
+  TRANSFER_SRGB,
   transferToLinear,
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
@@ -196,7 +196,7 @@ function rgbToLinearNits(
     rgb[c] = transferToLinear(rgb[c], contentTransfer);
   }
   const scalingFactor = getMaxNits(contentTransfer);
-  if (contentTransfer === kTransferHLG) {
+  if (contentTransfer === TRANSFER_HLG) {
     // HLG OOTF.
     const Y = 0.2627 * rgb[0] + 0.678 * rgb[1] + 0.0593 * rgb[2];
     const yToPoint2 = Math.pow(Y, 0.2);

@@ -18,10 +18,10 @@ import {AgtmMetadata, Altr} from './agtm';
 import {
   getLumaCoeffs,
   getMaxNits,
-  kPrimariesP3,
-  kPrimariesRec2020,
-  kTransferHLG,
-  kTransferPQ,
+  PRIMARIES_P3,
+  PRIMARIES_REC2020,
+  TRANSFER_HLG,
+  TRANSFER_PQ,
   primariesConvert,
   transferFromLinear,
   transferToLinear,
@@ -31,10 +31,10 @@ import {PiecewiseCubic} from './piecewise_cubic';
 export {
   getLumaCoeffs,
   getMaxNits,
-  kPrimariesP3,
-  kPrimariesRec2020,
-  kTransferHLG,
-  kTransferPQ,
+  PRIMARIES_P3,
+  PRIMARIES_REC2020,
+  TRANSFER_HLG,
+  TRANSFER_PQ,
   primariesConvert,
   transferFromLinear,
   transferToLinear,
@@ -63,7 +63,7 @@ export function getGainApplicationPrimaries(
   return (
     metadata.gain_application_space_primaries ??
     metadata.gain_application_space_chromaticities ??
-    kPrimariesRec2020
+    PRIMARIES_REC2020
   );
 }
 
@@ -238,7 +238,7 @@ export function grayAdaptation(
  */
 export function toPq(sdrRelative: number, metadata: AgtmMetadata) {
   const unitized = (sdrRelative * metadata.hdr_reference_white) / 10000;
-  return transferFromLinear(unitized, kTransferPQ);
+  return transferFromLinear(unitized, TRANSFER_PQ);
 }
 
 /**
@@ -246,7 +246,7 @@ export function toPq(sdrRelative: number, metadata: AgtmMetadata) {
  */
 export function fromPq(lut1d: number, metadata: AgtmMetadata) {
   return (
-    (transferToLinear(lut1d, kTransferPQ) * 10000) /
+    (transferToLinear(lut1d, TRANSFER_PQ) * 10000) /
     metadata.hdr_reference_white
   );
 }
@@ -466,7 +466,7 @@ export function getLutInputPrimaries(
   if (options.inputColorSpaceMode === 'content') {
     return contentPrimaries;
   } else if (options.inputColorSpaceMode === 'p3') {
-    return kPrimariesP3;
+    return PRIMARIES_P3;
   }
   return getGainApplicationPrimaries(metadata);
 }
@@ -486,7 +486,7 @@ function applyHlgOotfUnitized(
   const rgbRec2020 = primariesConvert(
     unitizedRgb,
     contentPrimaries,
-    kPrimariesRec2020,
+    PRIMARIES_REC2020,
   );
   const luma =
     0.2627 * rgbRec2020[0] + 0.678 * rgbRec2020[1] + 0.0593 * rgbRec2020[2];
@@ -494,7 +494,7 @@ function applyHlgOotfUnitized(
   const afterOotfRec2020 = rgbRec2020.map((c: number) => c * multiplier);
   return primariesConvert(
     afterOotfRec2020,
-    kPrimariesRec2020,
+    PRIMARIES_REC2020,
     contentPrimaries,
   );
 }
@@ -538,7 +538,7 @@ export function getToLut1d(
   if (!func) {
     return null;
   }
-  if (contentTransfer !== kTransferHLG) {
+  if (contentTransfer !== TRANSFER_HLG) {
     return func;
   }
   // In the Android LUT API, for HLG content the LUT input have not had the HLG
@@ -748,7 +748,7 @@ export function generate3dLut(
           }
         }
 
-        if (contentTransfer === kTransferHLG) {
+        if (contentTransfer === TRANSFER_HLG) {
           rgbUnitized = applyHlgOotfUnitized(rgbUnitized, inputPrimaries);
         }
 

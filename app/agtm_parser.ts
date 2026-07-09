@@ -20,9 +20,9 @@
 
 import {AgtmMetadata, Altr, ComponentMix, Point2} from './color_helpers/agtm';
 import {
-  kPrimariesP3,
-  kPrimariesRec2020,
-  kPrimariesSRGB,
+  PRIMARIES_P3,
+  PRIMARIES_REC2020,
+  PRIMARIES_SRGB,
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
 import {pchipInterpolationSlopes} from './color_helpers/pchip';
@@ -121,7 +121,7 @@ export function parseAgtm(stream: Bitstream): AgtmMetadata | null {
         altrList.push({headroom, curve, mix});
       }
     }
-    const primaries = kPrimariesRec2020;
+    const primaries = PRIMARIES_REC2020;
     return {
       altr: altrList,
       gain_application_space_primaries: primaries,
@@ -138,11 +138,11 @@ export function parseAgtm(stream: Bitstream): AgtmMetadata | null {
   let primaries: number | undefined;
   let chromaticities: number[] | undefined;
   if (gainApplicationChromaticitiesMode === 0) {
-    primaries = kPrimariesSRGB;
+    primaries = PRIMARIES_SRGB;
   } else if (gainApplicationChromaticitiesMode === 1) {
-    primaries = kPrimariesP3;
+    primaries = PRIMARIES_P3;
   } else if (gainApplicationChromaticitiesMode === 2) {
-    primaries = kPrimariesRec2020;
+    primaries = PRIMARIES_REC2020;
   } else {
     chromaticities = [];
     for (let i = 0; i < 8; ++i) {

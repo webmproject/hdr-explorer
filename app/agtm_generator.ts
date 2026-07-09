@@ -25,9 +25,9 @@ import {AgtmMetadata, ComponentMix, Point2} from './color_helpers/agtm';
 import {QuadraticBezier} from './color_helpers/bezier';
 import {
   getMaxNits,
-  kPrimariesRec2020,
-  kTransferJz,
-  kTransferPQ,
+  PRIMARIES_REC2020,
+  TRANSFER_JZ,
+  TRANSFER_PQ,
   transferFromLinear,
   transferToLinear,
 } from './color_helpers/color_functions';
@@ -39,8 +39,8 @@ import {ComputedStats, getPercentile, ImageStats} from './image_stats';
 function jzOetfSlope(nits: number) {
   const normalized = nits / 10000;
   const epsilon = 1e-3;
-  const v1 = transferFromLinear(normalized, kTransferJz);
-  const v2 = transferFromLinear(normalized + epsilon, kTransferJz);
+  const v1 = transferFromLinear(normalized, TRANSFER_JZ);
+  const v2 = transferFromLinear(normalized + epsilon, TRANSFER_JZ);
   return (v2 - v1) / epsilon;
 }
 
@@ -76,8 +76,8 @@ export function getHdrReferenceWhite(stats: ComputedStats): number {
   const median = getPercentile(0.5, stats.bins, 3);
   const brighterMedian =
     transferToLinear(
-      transferFromLinear(median / 10000, kTransferJz) * 1.5,
-      kTransferJz,
+      transferFromLinear(median / 10000, TRANSFER_JZ) * 1.5,
+      TRANSFER_JZ,
     ) * 10000;
   luma = Math.min(luma, brighterMedian);
 
@@ -301,7 +301,7 @@ function generateAgtmFromTmo(
 
   const agtm: AgtmMetadata = {
     hdr_reference_white: referenceWhite,
-    gain_application_space_primaries: kPrimariesRec2020,
+    gain_application_space_primaries: PRIMARIES_REC2020,
     baseline_hdr_headroom: Math.log2(contentHeadroomLinear),
     altr: [],
   };
@@ -381,7 +381,7 @@ function generateRwtmo(
 
   const agtm: AgtmMetadata = {
     hdr_reference_white: referenceWhite,
-    gain_application_space_primaries: kPrimariesRec2020,
+    gain_application_space_primaries: PRIMARIES_REC2020,
     baseline_hdr_headroom: Math.log2(contentHeadroomLinear),
     altr: [],
   };
@@ -451,7 +451,7 @@ function generateHistogramBased(
 
   const agtm: AgtmMetadata = {
     hdr_reference_white: referenceWhite,
-    gain_application_space_primaries: kPrimariesRec2020,
+    gain_application_space_primaries: PRIMARIES_REC2020,
     baseline_hdr_headroom: Math.log2(contentHeadroomLinear),
     altr: [],
   };
@@ -547,9 +547,9 @@ function generateHistogramBased(
       // Rescale the curve to make sure it does not go over the targetHeadroomLinear.
       // The rescaling is done in PQ space.
       const linearToPq = (v: number) =>
-        transferFromLinear((v * referenceWhite) / 10000, kTransferPQ);
+        transferFromLinear((v * referenceWhite) / 10000, TRANSFER_PQ);
       const pqToLinear = (v: number) =>
-        (transferToLinear(v, kTransferPQ) * 10000) / referenceWhite;
+        (transferToLinear(v, TRANSFER_PQ) * 10000) / referenceWhite;
 
       const pqMaxY = linearToPq(maxY);
       const pqtargetHeadroomLinear = linearToPq(targetHeadroomLinear);
@@ -665,11 +665,11 @@ class LinearPqToneMapper implements ToneMappingOperator {
   ) {}
 
   private toPq(x: number): number {
-    return transferFromLinear((x * this.referenceWhite) / 10000, kTransferPQ);
+    return transferFromLinear((x * this.referenceWhite) / 10000, TRANSFER_PQ);
   }
 
   private fromPq(x: number): number {
-    return (transferToLinear(x, kTransferPQ) * 10000) / this.referenceWhite;
+    return (transferToLinear(x, TRANSFER_PQ) * 10000) / this.referenceWhite;
   }
 
   evaluate(x: number): number {

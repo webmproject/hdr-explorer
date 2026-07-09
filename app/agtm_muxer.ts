@@ -18,9 +18,9 @@ import {ByteWriter} from './bitstream';
 import {AgtmMetadata} from './color_helpers/agtm';
 import {
   getChromaticities,
-  kPrimariesP3,
-  kPrimariesRec2020,
-  kPrimariesSRGB,
+  PRIMARIES_P3,
+  PRIMARIES_REC2020,
+  PRIMARIES_SRGB,
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
 import {
@@ -120,9 +120,9 @@ function getGainApplicationChromaticitiesMode(
   c: number[] | undefined,
 ): number {
   if (primaries !== undefined) {
-    if (primaries === kPrimariesRec2020) return 2;
-    if (primaries === kPrimariesP3) return 1;
-    if (primaries === kPrimariesSRGB) return 0;
+    if (primaries === PRIMARIES_REC2020) return 2;
+    if (primaries === PRIMARIES_P3) return 1;
+    if (primaries === PRIMARIES_SRGB) return 0;
     return 3;
   }
   if (!c) return 2; // Default to Rec.2020 if absolutely nothing is specified (shouldn't happen with valid metadata)
@@ -130,9 +130,9 @@ function getGainApplicationChromaticitiesMode(
   function match(c1: number[], c2: number[]) {
     return c1.every((v, i) => Math.abs(v - c2[i]) < 1e-4);
   }
-  if (match(c, getChromaticities(kPrimariesRec2020))) return 2;
-  if (match(c, getChromaticities(kPrimariesP3))) return 1;
-  if (match(c, getChromaticities(kPrimariesSRGB))) return 0;
+  if (match(c, getChromaticities(PRIMARIES_REC2020))) return 2;
+  if (match(c, getChromaticities(PRIMARIES_P3))) return 1;
+  if (match(c, getChromaticities(PRIMARIES_SRGB))) return 0;
   return 3;
 }
 
@@ -224,7 +224,7 @@ export function makeAgtmPayload(m: AgtmMetadata): Uint8Array {
     const customChromaticities =
       m.gain_application_space_chromaticities ??
       getChromaticities(
-        m.gain_application_space_primaries ?? kPrimariesRec2020,
+        m.gain_application_space_primaries ?? PRIMARIES_REC2020,
       );
     for (let i = 0; i < 8; ++i) {
       const c = customChromaticities[i];

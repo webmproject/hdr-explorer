@@ -15,11 +15,11 @@
  */
 
 import {AgtmMetadata} from './color_helpers/agtm';
-import {kPrimariesRec2020} from './color_helpers/color_functions';
+import {PRIMARIES_REC2020} from './color_helpers/color_functions';
 
 export const kDefaultMetadata: AgtmMetadata = {
   'hdr_reference_white': 203,
-  'gain_application_space_primaries': kPrimariesRec2020,
+  'gain_application_space_primaries': PRIMARIES_REC2020,
   'baseline_hdr_headroom': 2.300448,
   'altr': [
     {
