@@ -350,6 +350,14 @@ export function getMediaInfoString(media: DecodedMedia): string {
       if (!Object.prototype.hasOwnProperty.call(parsed.tracks, trackId)) continue;
       const track = parsed.tracks[trackId];
       info += `  - ID: ${track.id}, Type: ${track.handlerType}, Codec: ${track.codec}, Samples: ${track.samples.length}\n`;
+      const trackReferences = track.trackReferences;
+      if (trackReferences && Object.keys(trackReferences).length > 0) {
+        for (const refType in trackReferences) {
+          if (!Object.prototype.hasOwnProperty.call(trackReferences, refType)) continue;
+          const refTrackIds = trackReferences[refType];
+          info += `    - Track Reference: type '${refType}', ID: ${refTrackIds.join(', ')}\n`;
+        }
+      }
     }
   }
 

@@ -239,6 +239,7 @@ export interface Track {
   timescale: number;
   defaultDuration?: number; // Sample default duration, in timescale units.
   box?: TrakBox;
+  trackReferences: {[type: string]: number[]};
 }
 
 export type ItutT35MetadataType = 'AGTM' | 'HDR10+';
@@ -383,6 +384,26 @@ export function getFirstVideoTrack(tracks: {
   [trackId: string]: Track;
 }): Track | undefined {
   return Object.values(tracks).find((t) => t.handlerType === 'vide');
+}
+
+/**
+ * Returns the track references (from 'tref' box) for a given track, if any.
+ */
+function getTrackReferences(track: TrakBox): {[type: string]: number[]} {
+  const tref = track.getChild('tref', TrefBox);
+  if (!tref || !tref.children.length) {
+    return {};
+  }
+  const refs: {[type: string]: number[]} = {};
+  for (const child of tref.children) {
+    if (child instanceof TrackReferenceTypeBox && child.trackIds.length > 0) {
+      if (!refs[child.type]) {
+        refs[child.type] = [];
+      }
+      refs[child.type].push(...child.trackIds);
+    }
+  }
+  return refs;
 }
 
 function parseHdr10p(stream: Bitstream): Hdr10pMetadata | null {
@@ -1320,6 +1341,7 @@ class MP4Parser {
       handlerType: hdlr.handlerType,
       timescale: mdhd.timescale,
       box: trakBox,
+      trackReferences: getTrackReferences(trakBox),
     };
 
     this.extractCicpFromColrBox(trakBox, trackId);
@@ -2111,6 +2133,7 @@ class WebmParser {
             defaultDuration: defaultDurationNs
               ? defaultDurationNs / timecodeScale
               : undefined,
+            trackReferences: {},
           };
 
           if (

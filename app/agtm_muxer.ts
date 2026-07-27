@@ -745,6 +745,9 @@ function muxAgtmMetadataMp4(
     handlerType: 'meta',
     timescale: mdhdBox.timescale,
     box: trakBox,
+    trackReferences: {
+      'rndr': [videoTrack.id],
+    },
   };
 
   // Fill stscBox (Sample to Chunk Box) for the AGTM track.
