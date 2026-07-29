@@ -417,6 +417,9 @@ const contentGridEl = getHTMLElement('ContentGrid');
 const jsonUploadEl = getInputElement('JsonUpload');
 const mediaInfoDialogEl = document.getElementById('MediaInfoDialog') as HTMLDialogElement;
 const closeMediaInfoDialogEl = getButtonElement('CloseMediaInfoDialog');
+const errorToastEl = getHTMLElement('ErrorToast');
+const errorToastMessageEl = getHTMLElement('ErrorToastMessage');
+const closeErrorToastEl = getButtonElement('CloseErrorToast');
 
 function snakeToPascal(s: string): string {
   return s
@@ -1431,7 +1434,7 @@ async function onFile(name: string, f: Blob, isUploadedFile: boolean = false) {
     mediaFilename = name;
     mediaBlob = f;
   } catch (error) {
-    console.error('Error decoding media:', error);
+    showErrorToast(error, 'Error decoding media:');
   }
 }
 
@@ -1459,7 +1462,7 @@ async function onFileList(files: FileList | null) {
         await setAgtmMetadata();
         renderVisiblePanels();
       } catch (err) {
-        alert(`Error parsing JSON file: ${err}`);
+        showErrorToast(err, 'Error parsing JSON file:');
       }
     };
     reader.readAsText(f);
@@ -1493,7 +1496,7 @@ async function fetchFile(filename: string) {
     if (error instanceof Error && error.name === 'AbortError') {
       console.log('Fetch aborted:', filename);
     } else {
-      console.error('Fetch error:', error);
+      showErrorToast(error, `Error loading media (${filename}):`);
     }
   }
 }
@@ -1842,6 +1845,39 @@ function maybeShowWarnings() {
   }
 }
 
+let errorToastTimeoutId: number | null = null;
+
+export function showErrorToast(
+  error: unknown,
+  context?: string,
+  durationMs: number = 5000,
+) {
+  if (context) {
+    console.error(context, error);
+  } else {
+    console.error(error);
+  }
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message =
+    context && !rawMessage.startsWith(context)
+      ? `${context} ${rawMessage}`
+      : rawMessage;
+
+  if (errorToastTimeoutId !== null) {
+    clearTimeout(errorToastTimeoutId);
+    errorToastTimeoutId = null;
+  }
+  errorToastMessageEl.textContent = message;
+  errorToastEl.hidden = false;
+  if (durationMs > 0) {
+    errorToastTimeoutId = window.setTimeout(() => {
+      errorToastEl.hidden = true;
+      errorToastTimeoutId = null;
+    }, durationMs);
+  }
+}
+
+
 class PanelScrollSyncer {
   private scrollTop = 0;
   private scrollLeft = 0;
@@ -2087,7 +2123,7 @@ async function generateDynamicMetadata(
   const parsedMp4 = decodedMedia.parsedMedia;
   const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
   if (!videoTrack || !videoTrack.timescale) {
-    console.error('No video track with timescale found');
+    showErrorToast('No video track with timescale found');
     return null;
   }
   const numFrames = videoTrack.samples.length;
@@ -2496,7 +2532,7 @@ async function handleSaveAgtmVideoClick(isDynamic: boolean) {
 
   if (isDynamic) {
     if (agtmMetadataType === 'fromfile') {
-      console.error(
+      showErrorToast(
         "Dynamic AGTM is not supported with 'fromfile' metadata type.",
       );
       return;
@@ -2745,6 +2781,13 @@ export function main() {
 });
 closeMediaInfoDialogEl.addEventListener('click', () => {
   mediaInfoDialogEl.close();
+});
+closeErrorToastEl.addEventListener('click', () => {
+  if (errorToastTimeoutId !== null) {
+    clearTimeout(errorToastTimeoutId);
+    errorToastTimeoutId = null;
+  }
+  errorToastEl.hidden = true;
 });
 
 const dialogsToCloseOnClickOutside = [mediaInfoDialogEl, permissionDialogEl];
@@ -3181,7 +3224,7 @@ populateContentDropdown();
       getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
       getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
     } catch (e) {
-      console.error('Failed to parse SMPTE 2094-40 metadata: ', e);
+      showErrorToast(e, 'Failed to parse SMPTE 2094-40 metadata:');
       getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(null);
       getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(null);
     }
