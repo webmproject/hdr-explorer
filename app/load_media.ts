@@ -205,8 +205,11 @@ export async function decodeMediaWithCallback(
     fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
   }
 
+  const isMatroska = extension === 'webm' || extension === 'mkv';
   const parsedMedia = fileArrayBuffer
-    ? (extension === 'webm' ? parseWebm(fileArrayBuffer) : parseMp4(fileArrayBuffer))
+    ? (isMatroska ?
+      parseWebm(fileArrayBuffer) :
+      parseMp4(fileArrayBuffer))
     : null;
   if (parsedMedia) {
     console.debug('Parsed Video:', parsedMedia);
