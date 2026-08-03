@@ -20,6 +20,8 @@ import {
   TRANSFER_PQ,
   TRANSFER_SRGB,
   transferToLinear,
+  applyHlgOotf,
+  PRIMARIES_REC2020
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
 
@@ -191,22 +193,17 @@ function rgbToLinearNits(
   rgbIn: [number, number, number],
   contentTransfer: number,
 ): [number, number, number] {
-  const rgb: [number, number, number] = [...rgbIn];
+  let rgb: [number, number, number] = [...rgbIn];
   for (let c = 0; c < 3; ++c) {
     rgb[c] = transferToLinear(rgb[c], contentTransfer);
   }
   const scalingFactor = getMaxNits(contentTransfer);
   if (contentTransfer === TRANSFER_HLG) {
-    // HLG OOTF.
-    const Y = 0.2627 * rgb[0] + 0.678 * rgb[1] + 0.0593 * rgb[2];
-    const yToPoint2 = Math.pow(Y, 0.2);
-    for (let c = 0; c < 3; ++c) {
-      rgb[c] *= yToPoint2 * scalingFactor;
-    }
-  } else {
-    for (let c = 0; c < 3; ++c) {
-      rgb[c] *= scalingFactor;
-    }
+    // Assume Rec.2020 primaries.
+    rgb = applyHlgOotf(rgb, PRIMARIES_REC2020) as [number, number, number];
+  }
+  for (let c = 0; c < 3; ++c) {
+    rgb[c] *= scalingFactor;
   }
   return rgb;
 }

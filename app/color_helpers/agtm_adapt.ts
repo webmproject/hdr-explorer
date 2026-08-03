@@ -16,8 +16,8 @@
 
 import {AgtmMetadata, Altr} from './agtm';
 import {
+  applyHlgOotf,
   getLumaCoeffs,
-  getMaxNits,
   PRIMARIES_P3,
   PRIMARIES_REC2020,
   TRANSFER_HLG,
@@ -25,20 +25,10 @@ import {
   primariesConvert,
   transferFromLinear,
   transferToLinear,
+  getMaxSdrRelative
 } from './color_functions';
 import {clamp, exp2, Mat3, mat3Inv, mat3Mvm} from './math_helpers';
 import {PiecewiseCubic} from './piecewise_cubic';
-export {
-  getLumaCoeffs,
-  getMaxNits,
-  PRIMARIES_P3,
-  PRIMARIES_REC2020,
-  TRANSFER_HLG,
-  TRANSFER_PQ,
-  primariesConvert,
-  transferFromLinear,
-  transferToLinear,
-};
 
 /**
  * Returns the zero gain altr for the given metadata.
@@ -471,35 +461,7 @@ export function getLutInputPrimaries(
   return getGainApplicationPrimaries(metadata);
 }
 
-/**
- * Applies the HLG Opto-Optical Transfer Function (OOTF) to RGB values.
- * The input values are expected to be unitized, where 1.0 corresponds to 1000 nits.
- * The OOTF is defined in Rec. 2020 color space, so an internal conversion is performed.
- * @param unitizedRgb The RGB values in [0, 1].
- * @param contentPrimaries The color space of the unitizedRgb values.
- * @return The RGB values after applying the OOTF.
- */
-function applyHlgOotfUnitized(
-  unitizedRgb: number[],
-  contentPrimaries: number | number[],
-): number[] {
-  const rgbRec2020 = primariesConvert(
-    unitizedRgb,
-    contentPrimaries,
-    PRIMARIES_REC2020,
-  );
-  const luma =
-    0.2627 * rgbRec2020[0] + 0.678 * rgbRec2020[1] + 0.0593 * rgbRec2020[2];
-  const multiplier = Math.pow(Math.max(0, luma), 0.2);
-  const afterOotfRec2020 = rgbRec2020.map((c: number) => c * multiplier);
-  return primariesConvert(
-    afterOotfRec2020,
-    PRIMARIES_REC2020,
-    contentPrimaries,
-  );
-}
-
-export function applyHlgOotf(
+export function applyHlgOotfSdrRelative(
   sdrRelative: number[],
   contentPrimaries: number | number[],
   metadata: AgtmMetadata,
@@ -508,7 +470,7 @@ export function applyHlgOotf(
   const unitizedRgb = sdrRelative.map(
     (c) => (c * metadata.hdr_reference_white) / 1000,
   );
-  const afterOotfUnitized = applyHlgOotfUnitized(unitizedRgb, contentPrimaries);
+  const afterOotfUnitized = applyHlgOotf(unitizedRgb, contentPrimaries);
   // Scale back from 1000-nit unitized to SDR relative.
   return afterOotfUnitized.map(
     (c) => (c * 1000) / metadata.hdr_reference_white,
@@ -527,8 +489,10 @@ export function getToLut1d(
   targetedHdrHeadroom: number,
   contentTransfer: number,
 ): ToLut1dFunc | null {
-  const lutInputMax =
-    getMaxNits(contentTransfer) / (metadata.hdr_reference_white ?? 203);
+  const lutInputMax = getMaxSdrRelative(
+    contentTransfer,
+    metadata.hdr_reference_white,
+  );
   const func = getToLut1dFunc(
     lutType,
     metadata,
@@ -687,7 +651,7 @@ export function generate3dLut(
   contentPrimaries: number | number[],
 ): Float32Array {
   const lutInputMax =
-    getMaxNits(contentTransfer) / metadata.hdr_reference_white;
+    getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white);
   const adaptation = agtmAdapt(metadata, headroomLog2);
 
   const N = options.lut3dSize;
@@ -749,12 +713,12 @@ export function generate3dLut(
         }
 
         if (contentTransfer === TRANSFER_HLG) {
-          rgbUnitized = applyHlgOotfUnitized(rgbUnitized, inputPrimaries);
+          rgbUnitized = applyHlgOotf(rgbUnitized, inputPrimaries);
         }
 
         const rgbSdrRelative = rgbUnitized.map(
           (c) =>
-            (c * getMaxNits(contentTransfer)) / metadata.hdr_reference_white,
+            c * getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white),
         );
 
         const tonemapped = agtmToneMap(
@@ -816,7 +780,7 @@ export function agtmToneMapWithLut(
   lut1d: Float32Array | null,
 ): number[] {
   const lutInputMax =
-    getMaxNits(contentTransfer) / metadata.hdr_reference_white;
+    getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white);
   const lutOutputMax = exp2(headroomLog2);
 
   const inputPrimaries = getLutInputPrimaries(

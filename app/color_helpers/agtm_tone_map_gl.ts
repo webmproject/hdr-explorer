@@ -29,8 +29,8 @@ import {
 import {
   getChromaticities,
   getLumaCoeffs,
-  getMaxNits,
   PRIMARIES_P3,
+  getMaxSdrRelative
 } from './color_functions';
 import {exp2} from './math_helpers';
 
@@ -558,7 +558,7 @@ export class AgtmToneMapper {
       );
 
       const lutInputMax =
-        getMaxNits(contentTransfer) / (m.hdr_reference_white ?? 203);
+        getMaxSdrRelative(contentTransfer, m.hdr_reference_white);
       const lutOutputMax = exp2(targetedHdrHeadroom);
       gl.uniform1f(gl.getUniformLocation(p, 'lut_input_max'), lutInputMax);
       gl.uniform1f(gl.getUniformLocation(p, 'lut_output_max'), lutOutputMax);

@@ -509,6 +509,7 @@ export function getPrimariesName(primaries: number | number[]): string {
 
 /**
  * Converts a value from a non-linear transfer function to a linear value.
+ * For HLG, the OOTF is not included.
  * @param x The non-linear value.
  * @param transfer The transfer function CICP identifier.
  * @return The converted linear value.
@@ -557,6 +558,34 @@ export function transferToLinear(x: number, transfer: number): number {
     }
   }
   return 0.0;
+}
+
+/**
+ * Applies the HLG Opto-Optical Transfer Function (OOTF) to RGB values.
+ * The input values are expected to be unitized, where 1.0 corresponds to 1000 nits.
+ * The OOTF is defined in Rec. 2020 color space, so an internal conversion is performed.
+ * @param unitizedRgb The RGB values in [0, 1].
+ * @param contentPrimaries The color space of the unitizedRgb values.
+ * @return The RGB values after applying the OOTF.
+ */
+export function applyHlgOotf(
+  unitizedRgb: number[],
+  contentPrimaries: number | number[],
+): number[] {
+  const rgbRec2020 = primariesConvert(
+    unitizedRgb,
+    contentPrimaries,
+    PRIMARIES_REC2020,
+  );
+  const luma =
+    0.2627 * rgbRec2020[0] + 0.678 * rgbRec2020[1] + 0.0593 * rgbRec2020[2];
+  const multiplier = Math.pow(Math.max(0, luma), 0.2);
+  const afterOotfRec2020 = rgbRec2020.map((c: number) => c * multiplier);
+  return primariesConvert(
+    afterOotfRec2020,
+    PRIMARIES_REC2020,
+    contentPrimaries,
+  );
 }
 
 export function rec2020Luma(rgb: number[]) {
@@ -618,7 +647,6 @@ export function transferFromLinear(x: number, transfer: number): number {
   return 0.0;
 }
 
-
 /**
  * Computes the matrix to convert from RGB to XYZ given primaries and whitepoint.
  * Does not perform chromatic adaptation.
@@ -679,9 +707,7 @@ function computeXYZMatrix(chromaticities: number[]): Mat3 {
   };
 }
 
-function computeBradfordAdaptationMatrix(
-  whitePoint: [number, number],
-): Mat3 {
+function computeBradfordAdaptationMatrix(whitePoint: [number, number]): Mat3 {
   const wx = whitePoint[0];
   const wy = whitePoint[1];
 
@@ -1025,12 +1051,31 @@ export function primariesConvert(
   return point3ToVec3(mat3Mvm(conversionMatrix, vec3ToPoint3(rgb)));
 }
 
+/**
+ * Returns the maximum nits for the given transfer function.
+ * For SDR transfer function, 203 is assumed.
+ */
 export function getMaxNits(contentTransfer: number): number {
   return contentTransfer === TRANSFER_PQ
     ? 10000
     : contentTransfer === TRANSFER_HLG
       ? 1000
-      : contentTransfer === TRANSFER_SRGB
-        ? 203
-        : 1;
+      : 203;
+}
+
+/**
+ * Returns the maximum SDR relative value for the given transfer function and
+ * reference white. Only HLG and PQ can have values > 1.0, all other transfer
+ * function result in a value of 1.0.
+ * @param contentTransfer The transfer function identifier.
+ * @param hdrReferenceWhite The HDR reference white value in nits.
+ * @return The maximum SDR relative value.
+ */
+export function getMaxSdrRelative(
+  contentTransfer: number,
+  hdrReferenceWhite: number,
+): number {
+  return contentTransfer === TRANSFER_PQ || contentTransfer === TRANSFER_HLG ?
+    Math.max(getMaxNits(contentTransfer) / (hdrReferenceWhite || 203), 1.0)
+    : 1.0;
 }
