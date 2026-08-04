@@ -15,13 +15,13 @@
  */
 
 import {
+  applyHlgOotf,
   getMaxNits,
+  PRIMARIES_REC2020,
   TRANSFER_HLG,
   TRANSFER_PQ,
   TRANSFER_SRGB,
   transferToLinear,
-  applyHlgOotf,
-  PRIMARIES_REC2020
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
 
@@ -192,6 +192,7 @@ function getInverseDistribution(
 function rgbToLinearNits(
   rgbIn: [number, number, number],
   contentTransfer: number,
+  contentPrimaries: number,
 ): [number, number, number] {
   let rgb: [number, number, number] = [...rgbIn];
   for (let c = 0; c < 3; ++c) {
@@ -199,8 +200,7 @@ function rgbToLinearNits(
   }
   const scalingFactor = getMaxNits(contentTransfer);
   if (contentTransfer === TRANSFER_HLG) {
-    // Assume Rec.2020 primaries.
-    rgb = applyHlgOotf(rgb, PRIMARIES_REC2020) as [number, number, number];
+    rgb = applyHlgOotf(rgb, contentPrimaries) as [number, number, number];
   }
   for (let c = 0; c < 3; ++c) {
     rgb[c] *= scalingFactor;
@@ -211,6 +211,7 @@ function rgbToLinearNits(
 function imageToLinear(
   dataEncoded: Float32Array,
   contentTransfer: number,
+  contentPrimaries: number,
 ): Float32Array {
   const numPixels = dataEncoded.length / 4;
   const result = new Float32Array(dataEncoded.length);
@@ -221,7 +222,7 @@ function imageToLinear(
       dataEncoded[offset + 1],
       dataEncoded[offset + 2],
     ];
-    const rgbLinear = rgbToLinearNits(rgb, contentTransfer);
+    const rgbLinear = rgbToLinearNits(rgb, contentTransfer, contentPrimaries);
     for (let c = 0; c < 3; ++c) {
       result[offset + c] = rgbLinear[c];
     }
@@ -389,12 +390,16 @@ function computeStats(
 }
 
 export class ImageStats {
-  width: number;
-  height: number;
+  readonly width: number;
+  readonly height: number;
   private readonly rgbEncoded: Float32Array;
   private readonly linearImage: Float32Array;
 
-  constructor(video: ImageBitmap, contentTransfer: number) {
+  constructor(
+    video: ImageBitmap,
+    contentTransfer: number,
+    contentPrimaries: number,
+  ) {
     this.width = video.width;
     this.height = video.height;
     const canvas = new OffscreenCanvas(this.width, this.height);
@@ -455,7 +460,11 @@ export class ImageStats {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(fb);
 
-    this.linearImage = imageToLinear(this.rgbEncoded, contentTransfer);
+    this.linearImage = imageToLinear(
+      this.rgbEncoded,
+      contentTransfer,
+      contentPrimaries,
+    );
   }
 
   // The Pixel stats use a gamma curve to adjust the bin sizes.
@@ -484,21 +493,16 @@ export class ImageStats {
     return stats;
   }
 
-  getPixelValueNits(
-    x: number,
-    y: number,
-    contentTransfer: number,
-  ): [number, number, number] | null {
+  getPixelValueNits(x: number, y: number): [number, number, number] | null {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
       return null;
     }
     const offset = (y * this.width + x) * 4;
-    const rgbEncoded: [number, number, number] = [
-      this.rgbEncoded[offset + 0],
-      this.rgbEncoded[offset + 1],
-      this.rgbEncoded[offset + 2],
+    const linear: [number, number, number] = [
+      this.linearImage[offset + 0],
+      this.linearImage[offset + 1],
+      this.linearImage[offset + 2],
     ];
-
-    return rgbToLinearNits(rgbEncoded, contentTransfer);
+    return linear;
   }
 }

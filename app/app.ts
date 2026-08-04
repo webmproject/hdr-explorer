@@ -24,7 +24,7 @@ import {DEFAULT_FILE, TEST_FILES} from './test_files';
 
 import {AgtmMetadata, ComponentMix} from './color_helpers/agtm';
 import {LutInputColorSpaceMode, LutOptions, LutType, SamplingType,} from './color_helpers/agtm_adapt';
-import {getChromaticities, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB,} from './color_helpers/color_functions';
+import {getChromaticities, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB, TRANSFER_HLG} from './color_helpers/color_functions';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {exp2} from './color_helpers/math_helpers';
 import {basenameWithoutExtension, download, downloadApng, downloadBlob,} from './download';
@@ -647,6 +647,7 @@ function updateStats() {
     imageBitmapStats = new ImageStats(
       decodedMedia.imageBitmap,
       contentTransfer,
+      contentPrimaries,
     );
   }
   if (stats === null) {
@@ -660,7 +661,6 @@ function updateStats() {
     const rgbNits = imageBitmapStats.getPixelValueNits(
       selectedPixelCoords.x,
       selectedPixelCoords.y,
-      contentTransfer,
     );
     if (rgbNits) {
       updateSelectedPixel(
@@ -686,7 +686,7 @@ async function computeFrameStats(
 ): Promise<ComputedStats | null> {
   try {
     const bitmap = await createImageBitmapSource(frame);
-    const stats = new ImageStats(bitmap, contentTransfer);
+    const stats = new ImageStats(bitmap, contentTransfer, contentPrimaries);
     const computed = getStatsForAgtm(
       agtmMetadataType,
       stats,
@@ -1159,9 +1159,9 @@ async function onMetadataTypeChange() {
 }
 
 async function onSignalTransferChange() {
-  imageBitmapStats = null;
   contentTransfer = Number(signalTransferEl.value);
   // Stats are based on the contentTransfer so they need to be recomputed.
+  imageBitmapStats = null;
   updateStats();
   await setAgtmMetadata();
   updateRenderersImage();
@@ -1169,6 +1169,11 @@ async function onSignalTransferChange() {
 
 function onSignalPrimariesChange() {
   contentPrimaries = Number(signalPrimariesEl.value);
+  if (contentTransfer === TRANSFER_HLG) {
+    // For HLG, the OOTF depends on the primaries, so the stats need to be
+    // recomputed.
+    imageBitmapStats = null;
+  }
   updateStats();
   updateRenderersImage();
 }
@@ -2569,7 +2574,7 @@ function handleCanvasClick(e: MouseEvent) {
 
   selectedPixelCoords = {x, y};
 
-  const rgbNits = imageBitmapStats.getPixelValueNits(x, y, contentTransfer);
+  const rgbNits = imageBitmapStats.getPixelValueNits(x, y);
   if (rgbNits) {
     updateSelectedPixel(x, y, rgbNits);
   }

@@ -903,8 +903,6 @@ const TO_XYZ_D50_MATRICES: Map<number, Mat3> = new Map([
 function primariesToXYZD50(primaries: number): Mat3 {
   const mat = TO_XYZ_D50_MATRICES.get(primaries);
   if (mat) {
-    console.log(mat);
-    console.log('computed', computeXYZD50Matrix(getChromaticities(primaries)));
     return mat;
   }
   // In practice all matrices are precomputed so we shouldn't get here, but this
