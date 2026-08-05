@@ -896,10 +896,59 @@
           </button>
         </label>
       </p>
-      <p id="CurveEditorPixelInfo" style="white-space: pre-wrap"></p>
       <p>
         <button id="ResetAllButton" hidden>Reset All Overrides</button>
       </p>
+      <fieldset id="CurveEditorCustomColorFieldset">
+        <legend>Custom Color Evaluation</legend>
+        <div class="fieldset-content" style="flex-wrap: wrap; gap: 12px;">
+          <label for="CurveEditorCustomRgbInput">
+            RGB:
+            <input
+              type="text"
+              id="CurveEditorCustomRgbInput"
+              value="0.5, 0.5, 0.5"
+              style="width: 140px;"
+            />
+          </label>
+          <label for="CurveEditorCustomTransfer">
+            Transfer:
+            <select
+              name="CurveEditorCustomTransfer"
+              id="CurveEditorCustomTransfer"
+            >
+              <option value="13">sRGB</option>
+              <option value="16" selected>PQ</option>
+              <option value="18">HLG</option>
+              <option value="1">Rec.709</option>
+              <option value="4">Gamma 2.2</option>
+              <option value="6">Gamma 2.8</option>
+              <option value="14">Rec.2020 10bit</option>
+              <option value="15">Rec.2020 12bit</option>
+            </select>
+          </label>
+          <label for="CurveEditorCustomPrimaries">
+            Primaries:
+            <select
+              name="CurveEditorCustomPrimaries"
+              id="CurveEditorCustomPrimaries"
+            >
+              <option value="1">sRGB / BT.709</option>
+              <option value="4">BT.470-6 System M</option>
+              <option value="5">BT.470-6 System BG</option>
+              <option value="6">BT.601</option>
+              <option value="7">SMPTE 240M</option>
+              <option value="8">Generic film</option>
+              <option value="9" selected>BT.2020</option>
+              <option value="10">XYZ</option>
+              <option value="11">SMPTE RP 431-2</option>
+              <option value="12">P3</option>
+              <option value="22">CICP 22</option>
+            </select>
+          </label>
+        </div>
+        <p id="CurveEditorCustomColorInfo"></p>
+      </fieldset>
     </div>
 
     <div id="Hdr10pcurvesPanel" class="panel panel-containing-children" hidden>

@@ -742,3 +742,16 @@ textarea:not([noalterbackground]),
 #CloseErrorToast:hover {
   opacity: 0.8;
 }
+
+#CurveEditorCustomColorFieldset {
+  margin-top: 12px;
+  margin-bottom: 12px;
+  padding: 8px;
+}
+
+#CurveEditorCustomColorInfo {
+  white-space: pre-wrap;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  font-family: monospace;
+}

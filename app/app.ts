@@ -24,7 +24,7 @@ import {DEFAULT_FILE, TEST_FILES} from './test_files';
 
 import {AgtmMetadata, ComponentMix} from './color_helpers/agtm';
 import {LutInputColorSpaceMode, LutOptions, LutType, SamplingType,} from './color_helpers/agtm_adapt';
-import {getChromaticities, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB, TRANSFER_HLG} from './color_helpers/color_functions';
+import {getChromaticities, getPrimariesEnum, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB, TRANSFER_HLG} from './color_helpers/color_functions';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {exp2} from './color_helpers/math_helpers';
 import {basenameWithoutExtension, download, downloadApng, downloadBlob,} from './download';
@@ -234,7 +234,10 @@ const miscPanelInfos: Array<PanelInfo<Renderer>> = [
     rendererFactory: () => {
       const renderer = new CurveEditor(
         createCanvas('CurveEditorCanvas', false, reducedSizeCanvasStyles),
-        getHTMLElement('CurveEditorPixelInfo'),
+        getHTMLElement('CurveEditorCustomColorInfo'),
+        getInputElement('CurveEditorCustomRgbInput'),
+        getSelectElement('CurveEditorCustomPrimaries'),
+        getSelectElement('CurveEditorCustomTransfer'),
       );
       renderer.modelChangedCallback = (editorMetadata) => {
         agtmMetadata = editorMetadata;
@@ -616,18 +619,25 @@ function setStats(stats: ComputedStats | null) {
   getRenderer('stats', StatsViewer)?.setStats(stats);
 }
 
-function updateSelectedPixel(
-  x: number | null,
-  y: number | null,
-  rgbNits: [number, number, number] | null,
-) {
-  const coords = x !== null && y !== null ? {x, y} : null;
+function updateSelectedPixel() {
+  if (!imageBitmapStats) {
+    return;
+  }
+  const coords = selectedPixelCoords;
+  const rgbNits: [number, number, number] | null =
+    coords !== null
+      ? imageBitmapStats.getPixelValueNits(coords.x, coords.y)
+      : null;
+  const rgbEncoded: [number, number, number] | null =
+    coords !== null
+      ? imageBitmapStats.getPixelValueEncoded(coords.x, coords.y)
+      : null;
   for (const panel of allPanels) {
     if (panel.panelEl.hidden || !panel.renderer) {
       continue;
     }
     if (panel.renderer instanceof CurveEditor) {
-      panel.renderer.setSelectedPixel(rgbNits);
+      panel.renderer.setSelectedPixel(rgbNits, rgbEncoded);
     } else if (panel.renderer instanceof StatsViewer) {
       panel.renderer.setSelectedPixel(coords, rgbNits);
     }
@@ -657,22 +667,7 @@ function updateStats() {
       contentTransfer,
     );
   }
-  if (selectedPixelCoords) {
-    const rgbNits = imageBitmapStats.getPixelValueNits(
-      selectedPixelCoords.x,
-      selectedPixelCoords.y,
-    );
-    if (rgbNits) {
-      updateSelectedPixel(
-        selectedPixelCoords.x,
-        selectedPixelCoords.y,
-        rgbNits,
-      );
-    }
-  } else {
-    updateSelectedPixel(null, null, null);
-  }
-
+  updateSelectedPixel();
   setStats(stats);
 }
 
@@ -1024,6 +1019,17 @@ function setComponentMixFunction() {
   applyOverrides(agtmMetadata, originalMix);
 }
 
+function getPrimariesEnumOrMinusOne(metadata: AgtmMetadata) {
+  if (metadata.gain_application_space_primaries != null) {
+    return metadata.gain_application_space_primaries;
+  } else if (metadata.gain_application_space_chromaticities != null) {
+    return getPrimariesEnum(
+      metadata.gain_application_space_chromaticities,
+    ) ?? -1;
+  }
+  return -1;
+}
+
 function onMetadataChanged() {
   hdrReferenceWhiteSliderEl.value = agtmMetadata.hdr_reference_white.toString();
   hdrReferenceWhiteValueEl.innerText =
@@ -1034,8 +1040,8 @@ function onMetadataChanged() {
   baselineHeadroomLinearValueEl.innerText = exp2(
     agtmMetadata.baseline_hdr_headroom,
   ).toFixed(2);
-  const primariesEnum = agtmMetadata.gain_application_space_primaries ?? -1;
-  gainApplicationSpacePrimariesSelectEl.value = primariesEnum.toString();
+  gainApplicationSpacePrimariesSelectEl.value =
+    getPrimariesEnumOrMinusOne(agtmMetadata).toString();
 
   updateResetButtonsVisibility();
 
@@ -1165,6 +1171,7 @@ async function onSignalTransferChange() {
   updateStats();
   await setAgtmMetadata();
   updateRenderersImage();
+  updateSelectedPixel();
 }
 
 function onSignalPrimariesChange() {
@@ -1176,6 +1183,7 @@ function onSignalPrimariesChange() {
   }
   updateStats();
   updateRenderersImage();
+  updateSelectedPixel();
 }
 
 function setHash(key: string, value: string) {
@@ -2573,11 +2581,7 @@ function handleCanvasClick(e: MouseEvent) {
   const y = Math.max(0, Math.min(height - 1, Math.floor(texY * height)));
 
   selectedPixelCoords = {x, y};
-
-  const rgbNits = imageBitmapStats.getPixelValueNits(x, y);
-  if (rgbNits) {
-    updateSelectedPixel(x, y, rgbNits);
-  }
+  updateSelectedPixel();
 }
 
 // Zoom/pan controls.
@@ -3125,7 +3129,7 @@ populateContentDropdown();
   metadataJsonEl.addEventListener('change', (e) => {
     agtmMetadata = jsonToMetadata(metadataJsonEl.value);
 
-    const pri = agtmMetadata.gain_application_space_primaries ?? -1;
+    const pri = getPrimariesEnumOrMinusOne(agtmMetadata);
     if (pri === -1 && agtmMetadata.gain_application_space_chromaticities) {
       setHash(
         'custom_pri',

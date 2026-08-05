@@ -21,8 +21,14 @@ import {
   getGainApplicationPrimaries,
 } from '../color_helpers/agtm_adapt';
 import {
+  applyHlgOotf,
+  getMaxNits,
+  getMaxSdrRelative,
   getPrimariesName,
   primariesConvert,
+  TRANSFER_HLG,
+  TRANSFER_PQ,
+  transferToLinear,
 } from '../color_helpers/color_functions';
 import {
   logGainToLinear,
@@ -43,6 +49,18 @@ import {PiecewiseCubic} from '../color_helpers/piecewise_cubic';
 import {CdfBin, getPercentile} from '../image_stats';
 import {Base2dGraphRenderer} from './base_renderer';
 
+function parseRgbTriplet(str: string): [number, number, number] | null {
+  const parts = str
+    .trim()
+    .split(/[,;\s]+/)
+    .map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) {
+    return null;
+  }
+  const rgb: [number, number, number] = [parts[0], parts[1], parts[2]];
+  return rgb;
+}
+
 const kPointSelectMaxDist = 12 * 12;
 
 export class CurveEditor extends Base2dGraphRenderer {
@@ -58,16 +76,42 @@ export class CurveEditor extends Base2dGraphRenderer {
   private dragIndex: number | null = null;
   private showGainCurve = false;
   private showControlPoints = true;
-  private selectedPixelRgbNits: [number, number, number] | null = null;
+  /** Linear RGB in [0, 1] */
+  private selectedPixelRgbLinear: [number, number, number] | null = null;
   private readonly pixelInfoEl: HTMLElement;
+  private readonly customRgbInputEl: HTMLInputElement;
+  private readonly customPrimariesSelectEl: HTMLSelectElement;
+  private readonly customTransferSelectEl: HTMLSelectElement;
 
-  constructor(canvas: HTMLCanvasElement, pixelInfoEl: HTMLElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    pixelInfoEl: HTMLElement,
+    customRgbInputEl: HTMLInputElement,
+    customPrimariesSelectEl: HTMLSelectElement,
+    customTransferSelectEl: HTMLSelectElement,
+  ) {
     super(canvas);
     this.pixelInfoEl = pixelInfoEl;
+    this.customRgbInputEl = customRgbInputEl;
+    this.customPrimariesSelectEl = customPrimariesSelectEl;
+    this.customTransferSelectEl = customTransferSelectEl;
     this.canvas.style.touchAction = 'none';
     this.canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
     });
+
+    const updateCustom = () => {
+      this.updateCustomColorInfo();
+    };
+    if (this.customRgbInputEl) {
+      this.customRgbInputEl.addEventListener('input', updateCustom);
+    }
+    if (this.customPrimariesSelectEl) {
+      this.customPrimariesSelectEl.addEventListener('change', updateCustom);
+    }
+    if (this.customTransferSelectEl) {
+      this.customTransferSelectEl.addEventListener('change', updateCustom);
+    }
 
     this.modelChangedCallback = (param) => {};
 
@@ -129,29 +173,65 @@ export class CurveEditor extends Base2dGraphRenderer {
     return lines;
   }
 
-  setSelectedPixel(rgbNits: [number, number, number] | null) {
-    this.selectedPixelRgbNits = rgbNits;
+  setSelectedPixel(
+    rgbNits: [number, number, number] | null,
+    rgbEncoded: [number, number, number] | null,
+  ) {
+    if (rgbNits) {
+      this.selectedPixelRgbLinear = rgbNits.map(
+        (c) => c / getMaxNits(this.contentTransfer),
+      ) as [number, number, number];
+    } else {
+      this.selectedPixelRgbLinear = null;
+    }
+    if (rgbEncoded) {
+      this.customPrimariesSelectEl.value = this.contentPrimaries.toString();
+      this.customTransferSelectEl.value = this.contentTransfer.toString();
+      this.customRgbInputEl.value = rgbEncoded
+        .map((c) => c.toFixed(4))
+        .join(', ');
+    }
     this.draw();
   }
 
-  private getPixelInfoString(): string {
+  private getCustomColorInfoString(): string {
     const metadata = this.metadata;
-    if (!this.selectedPixelRgbNits || !metadata) {
+    if (!metadata) {
       return '';
     }
-    const rgbNits = this.selectedPixelRgbNits;
-    const sdrRelative = rgbNits.map((c) => c / metadata.hdr_reference_white);
+
+    const inputStr = this.customRgbInputEl.value;
+    const primaries = Number(this.customPrimariesSelectEl.value);
+    const transfer = Number(this.customTransferSelectEl.value);
+
+    let rgb = parseRgbTriplet(inputStr);
+    if (!rgb) {
+      return 'Enter a valid RGB color triplet (e.g. "0.5, 0.5, 0.5").';
+    }
+    let linear = rgb.map((c) => transferToLinear(c, transfer));
+    if (transfer === TRANSFER_HLG) {
+      linear = applyHlgOotf(linear, primaries);
+    }
+    const hdrReferenceWhite = metadata.hdr_reference_white || 203;
+    const maxNits =
+      transfer === TRANSFER_HLG || transfer === TRANSFER_PQ
+        ? getMaxNits(transfer)
+        : hdrReferenceWhite;
+    const linearNits = linear.map((c) => c * maxNits);
+
+    const linearSdrRelative = linearNits.map((c) => c / hdrReferenceWhite);
+
     const rgbGainSpace = primariesConvert(
-      sdrRelative,
-      this.contentPrimaries,
+      linearSdrRelative,
+      primaries,
       getGainApplicationPrimaries(metadata),
     );
 
     const mixValues = getComponentMixValue(
-      sdrRelative,
-      this.contentPrimaries,
+      linearSdrRelative,
+      primaries,
       metadata,
-      metadata.altr[this.altrIndex], // Assume they're all identical anyway.
+      metadata.altr[this.altrIndex],
     );
 
     const adaptation = agtmAdapt(metadata, this.headroomLog2);
@@ -170,30 +250,36 @@ export class CurveEditor extends Base2dGraphRenderer {
     const tonemappedRgbContentSpace = primariesConvert(
       tonemappedRgbGainSpace,
       getGainApplicationPrimaries(metadata),
-      this.contentPrimaries,
+      primaries,
+    );
+
+    const fmt4 = (x: number) => x.toFixed(4);
+    const fmt2 = (x: number) => x.toFixed(2);
+    const fmt4s = (x: number[]) => `[${x.map(fmt4).join(', ')}]`;
+    const fmt2s = (x: number[]) => `[${x.map(fmt2).join(', ')}]`;
+    const primariesStr = getPrimariesName(primaries);
+    const gainPrimariesStr = getPrimariesName(
+      getGainApplicationPrimaries(this.metadata!),
     );
     const tonemappedRgbContentSpaceNits = tonemappedRgbContentSpace.map(
-      (c) => c * metadata.hdr_reference_white,
-    );
-
-    const fmt = (x: number) => x.toFixed(2);
-    const fmt3 = (x: number[]) => `[${x.map(fmt).join(', ')}]`;
-
-    const contentPrimariesStr = getPrimariesName(this.contentPrimaries);
-    const gainPrimariesStr = getPrimariesName(
-      getGainApplicationPrimaries(metadata),
+      (c) => c * hdrReferenceWhite,
     );
 
     return (
-      `Pixel values in nits (${contentPrimariesStr}): ${fmt3(rgbNits)}\n` +
-      `Normalized values (${contentPrimariesStr}): ${fmt3(sdrRelative)}\n` +
-      `Gain space values (${gainPrimariesStr}): ${fmt3(rgbGainSpace)}\n` +
-      `Mix values: ${fmt3(mixValues)}\n` +
-      `Gain multipliers: ${fmt3(gainMultipliers)}\n` +
-      `Tone mapped values (${gainPrimariesStr}): ${fmt3(tonemappedRgbGainSpace)}\n` +
-      `Tone mapped values (${contentPrimariesStr}): ${fmt3(tonemappedRgbContentSpace)}\n` +
-      `Tone mapped values in nits (${contentPrimariesStr}): ${fmt3(tonemappedRgbContentSpaceNits)}`
+      `Linear in [0, 1] (${primariesStr}): ${fmt4s(linear)}\n` +
+      `Linear in nits (${primariesStr}): ${fmt2s(linearNits)} nits\n` +
+      `Linear SDR-relative (ref white ${fmt2(hdrReferenceWhite)} nits): ${fmt4s(linearSdrRelative)}\n` +
+      `Linear SDR-relative in gain space (${gainPrimariesStr}): ${fmt4s(rgbGainSpace)}\n` +
+      `Component mix: ${fmt4s(mixValues)}\n` +
+      `Gain multipliers: ${fmt4s(gainMultipliers)}\n` +
+      `Tone mapped SDR-relative in gain space (${gainPrimariesStr}): ${fmt4s(tonemappedRgbGainSpace)}\n` +
+      `Tone mapped SDR-relative ${primariesStr}): ${fmt4s(tonemappedRgbContentSpace)}\n` +
+      `Tone mapped in nits (${primariesStr}): ${fmt2s(tonemappedRgbContentSpaceNits)} nits`
     );
+  }
+
+  private updateCustomColorInfo() {
+    this.pixelInfoEl.innerText = this.getCustomColorInfoString();
   }
 
   setMetadata(metadata: AgtmMetadata) {
@@ -620,10 +706,12 @@ export class CurveEditor extends Base2dGraphRenderer {
 
   private drawSelectedPixelLine() {
     const metadata = this.metadata;
-    if (!this.selectedPixelRgbNits || !metadata) return;
+    if (!this.selectedPixelRgbLinear || !metadata) return;
 
+    const multiplier =
+        getMaxSdrRelative(this.contentTransfer, metadata.hdr_reference_white);
     const xValues = getComponentMixValue(
-      this.selectedPixelRgbNits.map((x) => x / metadata.hdr_reference_white),
+      this.selectedPixelRgbLinear.map((x) => x * multiplier),
       this.contentPrimaries,
       metadata,
       metadata.altr[0],
@@ -658,7 +746,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     }
   }
   render() {
-    this.pixelInfoEl.innerText = this.getPixelInfoString();
+    this.updateCustomColorInfo();
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     const graphTopY = 40;

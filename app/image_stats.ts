@@ -208,7 +208,7 @@ function rgbToLinearNits(
   return rgb;
 }
 
-function imageToLinear(
+function imageToLinearNits(
   dataEncoded: Float32Array,
   contentTransfer: number,
   contentPrimaries: number,
@@ -393,7 +393,7 @@ export class ImageStats {
   readonly width: number;
   readonly height: number;
   private readonly rgbEncoded: Float32Array;
-  private readonly linearImage: Float32Array;
+  private readonly linearImageNits: Float32Array;
 
   constructor(
     video: ImageBitmap,
@@ -460,7 +460,7 @@ export class ImageStats {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(fb);
 
-    this.linearImage = imageToLinear(
+    this.linearImageNits = imageToLinearNits(
       this.rgbEncoded,
       contentTransfer,
       contentPrimaries,
@@ -481,7 +481,7 @@ export class ImageStats {
     xScalingInv = ImageStats.kDefaultScalingInv,
     numBins = 100,
   ): ComputedStats {
-    const rgbExtendedL = this.linearImage;
+    const rgbExtendedL = this.linearImageNits;
     const valueRange: [number, number] | null = maxNits ? [0, maxNits] : null;
     const stats = computeStats(
       rgbExtendedL,
@@ -493,16 +493,35 @@ export class ImageStats {
     return stats;
   }
 
+  /**
+   * Returns the RGB value in nits for the given pixel coordinates.
+   * For SDR, uses a max value of 203 nits.
+   */
   getPixelValueNits(x: number, y: number): [number, number, number] | null {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
       return null;
     }
     const offset = (y * this.width + x) * 4;
     const linear: [number, number, number] = [
-      this.linearImage[offset + 0],
-      this.linearImage[offset + 1],
-      this.linearImage[offset + 2],
+      this.linearImageNits[offset + 0],
+      this.linearImageNits[offset + 1],
+      this.linearImageNits[offset + 2],
     ];
     return linear;
+  }
+
+  getPixelValueEncoded(
+    x: number,
+    y: number,
+  ): [number, number, number] | null {
+    if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
+      return null;
+    }
+    const offset = (y * this.width + x) * 4;
+    return [
+      this.rgbEncoded[offset + 0],
+      this.rgbEncoded[offset + 1],
+      this.rgbEncoded[offset + 2],
+    ];
   }
 }

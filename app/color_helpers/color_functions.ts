@@ -471,12 +471,33 @@ export const TRANSFER_HLG = 18;
 export const TRANSFER_JZ = 42; // Arbitrary enum value.
 
 /**
+ * Returns the CICP enum value for the given chromaticities, or null if not found.
+ */
+export function getPrimariesEnum(chromaticities: number[]): number | null {
+  for (const enumValue of [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22]) {
+    const enumChromaticities = getChromaticities(enumValue);
+    if (chromaticities.length === enumChromaticities.length &&
+      chromaticities.every(
+        (c, i) => Math.abs(c - enumChromaticities[i]) < 1e-6,
+      )
+    ) {
+      return enumValue;
+    }
+  }
+  return null;
+}
+
+/**
  * Returns a human-readable name for the given primary enum or chromaticities.
  * @param primaries The CICP enum or chromaticity array.
  * @return A descriptive string.
  */
 export function getPrimariesName(primaries: number | number[]): string {
   if (typeof primaries !== 'number') {
+    const enumValue = getPrimariesEnum(primaries);
+    if (enumValue !== null) {
+      return getPrimariesName(enumValue);
+    }
     return 'Custom Color Space';
   }
   switch (primaries) {
