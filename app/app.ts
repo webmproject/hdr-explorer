@@ -120,6 +120,8 @@ const logPercentEl = getInputElement('StatsLogPercent');
 let contentTransfer: number = TRANSFER_PQ;
 let contentPrimaries: number = PRIMARIES_REC2020;
 
+console.log(lut3dPlotBSliderEl);
+
 interface Zoomable {
   setZoomPan(zoom: number, panX: number, panY: number): void;
 }
