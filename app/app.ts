@@ -32,7 +32,7 @@ import {ScreenDetailed} from './global_interfaces';
 import {averageStats, ComputedStats, ImageStats} from './image_stats';
 import {jsonToMetadata, metadataListToJson, metadataToJson} from './json';
 import {createImageBitmapSource, DecodedMedia, decodeMediaWithCallback, getMediaInfoString} from './load_media';
-import {findTrackSampleIndexForTime, getAverageFramerate, getFirstVideoTrack} from './media_parser';
+import {findTrackSampleIndexForTime, getAverageFramerate, getFirstVideoTrack, getSmpte209440Metadata} from './media_parser';
 import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
@@ -671,7 +671,19 @@ function updateStats() {
   setStats(stats);
 }
 
-function agtmNeedsStats(type: AgtmMetadataType | 'fromfile' | 'custom') {
+function isStatsRequiringPanelOpen(): boolean {
+  const panelsThatNeedStats = ['stats'];
+  return allPanels.some(
+    (panel) =>
+      panel.toggle.checked &&
+      panelsThatNeedStats.includes(panel.hashName),
+  );
+}
+
+function needsFrameStats(type: AgtmMetadataType | 'fromfile' | 'custom'): boolean {
+  if (isStatsRequiringPanelOpen()) {
+    return true;
+  }
   return type !== 'fromfile' && type !== 'custom' && needsStats(type);
 }
 
@@ -691,13 +703,15 @@ async function computeFrameStats(
     bitmap.close();
     return computed;
   } catch (e) {
-    console.error('Failed to get stats for current frame', e);
+    console.error('Failed to get stats for frame', e);
     return null;
   }
 }
 
 async function getStatsForCurrentFrame(): Promise<ComputedStats | null> {
-  if (myVideoEl.readyState < 1) return null;
+  if (myVideoEl.readyState < 1 || !needsFrameStats(agtmMetadataType)) {
+    return null;
+  }
   return computeFrameStats(myVideoEl);
 }
 
@@ -705,9 +719,58 @@ async function recomputeAgtmForCurrentFrame() {
   const currentFrameStats = await getStatsForCurrentFrame();
   if (currentFrameStats) {
     setStats(currentFrameStats);
-    await setAgtmMetadata();
-    renderVisiblePanels();
   }
+  await setAgtmMetadata();
+  renderVisiblePanels();
+}
+
+function getHdr10pForTime(time: number): Hdr10pMetadata | null {
+  if (decodedMedia?.parsedMedia) {
+    const meta = getSmpte209440Metadata(decodedMedia.parsedMedia, time);
+    if (typeof meta !== 'string' && meta !== null) {
+      return meta;
+    }
+  }
+  return hdr10pMetadata;
+}
+
+function getCustomAgtmMetadata(
+  hdrReferenceWhite?: number,
+  baselineHeadroomLinear?: number,
+): AgtmMetadata {
+  let bestMeta: AgtmMetadata | null = null;
+  if (customAgtmMetadataArray) {
+    if (decodedMedia?.type === 'video' && decodedMedia.parsedMedia) {
+      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
+      let frameIdx = 0;
+      if (videoTrack) {
+        frameIdx =
+          findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
+      }
+      frameIdx = Math.min(frameIdx, customAgtmMetadataArray.length - 1);
+      for (let i = frameIdx; i >= 0; --i) {
+        if (customAgtmMetadataArray[i]) {
+          bestMeta = customAgtmMetadataArray[i];
+          break;
+        }
+      }
+    }
+    if (bestMeta === null) {
+      bestMeta = customAgtmMetadataArray.find((m) => m !== null) ?? null;
+    }
+  } else {
+    bestMeta = customAgtmMetadata;
+  }
+
+  const metadata = structuredClone(bestMeta ?? kDefaultMetadata);
+  if (hdrReferenceWhite !== undefined) {
+    metadata.hdr_reference_white = hdrReferenceWhite;
+  }
+  if (baselineHeadroomLinear !== undefined) {
+    metadata.baseline_hdr_headroom =
+      baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
+  }
+  return metadata;
 }
 
 async function getAgtmForType(
@@ -715,10 +778,10 @@ async function getAgtmForType(
   stats: ComputedStats | null,
   hdrReferenceWhite?: number,
   baselineHeadroomLinear?: number,
+  hdr10pOverride?: Hdr10pMetadata | null,
 ): Promise<AgtmMetadata | null> {
-  let metadata: AgtmMetadata;
   if (type === 'fromfile') {
-    metadata = structuredClone(
+    const metadata = structuredClone(
       decodedMedia?.metadata?.agtmMetadata ?? kDefaultMetadata,
     );
     if (hdrReferenceWhite !== undefined) {
@@ -728,55 +791,27 @@ async function getAgtmForType(
       metadata.baseline_hdr_headroom =
         baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
     }
-  } else if (type === 'custom') {
-    if (customAgtmMetadataArray) {
-      let bestMeta: AgtmMetadata | null = null;
-      if (decodedMedia?.type === 'video' && decodedMedia.parsedMedia) {
-        const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
-        let frameIdx = 0;
-        if (videoTrack) {
-          frameIdx =
-            findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
-        }
-        frameIdx = Math.min(frameIdx, customAgtmMetadataArray.length - 1);
-        // Search backwards from the current frame index. A null entry means
-        // to use the metadata from the most recent non-null entry.
-        for (let i = frameIdx; i >= 0; --i) {
-          if (customAgtmMetadataArray[i]) {
-            bestMeta = customAgtmMetadataArray[i];
-            break;
-          }
-        }
-      }
-      if (bestMeta === null) {
-        // For images, or if not video etc., take first non-null.
-        bestMeta = customAgtmMetadataArray.find((m) => m !== null) ?? null;
-      }
-      metadata = structuredClone(bestMeta ?? kDefaultMetadata);
-    } else {
-      metadata = structuredClone(customAgtmMetadata ?? kDefaultMetadata);
-    }
-
-    if (hdrReferenceWhite !== undefined) {
-      metadata.hdr_reference_white = hdrReferenceWhite;
-    }
-    if (baselineHeadroomLinear !== undefined) {
-      metadata.baseline_hdr_headroom =
-        baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
-    }
-  } else {
-    if (needsStats(type) && stats === null) {
-      return null; // Image pixels not available yet.
-    }
-    metadata = await getAgtm(
-      type,
-      contentTransfer,
-      stats ?? undefined,
-      hdrReferenceWhite,
-      baselineHeadroomLinear,
-    );
+    return metadata;
   }
-  return metadata;
+
+  if (type === 'custom') {
+    return getCustomAgtmMetadata(hdrReferenceWhite, baselineHeadroomLinear);
+  }
+
+  if (needsStats(type) && stats === null) {
+    return null; // Image pixels not available yet.
+  }
+
+  const targetHdr10p =
+    hdr10pOverride ?? getHdr10pForTime(myVideoEl.currentTime) ?? undefined;
+  return getAgtm(
+    type,
+    contentTransfer,
+    stats ?? undefined,
+    hdrReferenceWhite,
+    baselineHeadroomLinear,
+    targetHdr10p,
+  );
 }
 
 /**
@@ -797,6 +832,19 @@ async function setAgtmMetadata(
     baselineHeadroomLinear === undefined
   ) {
     baselineHeadroomLinear = Number(baselineHeadroomSliderEl.value);
+  }
+
+  if (decodedMedia?.parsedMedia) {
+    const currentHdr10p = getHdr10pForTime(myVideoEl.currentTime);
+    if (currentHdr10p && currentHdr10p !== hdr10pMetadata) {
+      hdr10pMetadata = currentHdr10p;
+      const smpte209440El = getPanelEl('smpte209440') as HTMLTextAreaElement;
+      if (smpte209440El) {
+        smpte209440El.value = JSON.stringify(currentHdr10p, null, 2);
+      }
+      getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+      getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+    }
   }
 
   // If dynamic metadata is enabled and is already computed, use that.
@@ -902,7 +950,7 @@ async function setAgtmMetadata(
 }
 
 function updateResetButtonsVisibility() {
-  const canShowResets = computedStats || !agtmNeedsStats(agtmMetadataType);
+  const canShowResets = computedStats || !needsFrameStats(agtmMetadataType);
 
   resetHdrReferenceWhiteButtonEl.hidden =
     !hdrReferenceWhiteOverridden || !canShowResets;
@@ -1358,10 +1406,12 @@ async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean
   }
 
   const hasAgtm = media.metadata?.agtmMetadata != null;
+  const hasHdr10p = media.metadata?.hdr10pMetadata != null;
   for (const option of metadataSelectEl.options) {
     if (option.value === 'fromfile') {
       option.disabled = !hasAgtm;
-      break;
+    } else if (option.value === AgtmMetadataType.HDR10P) {
+      option.disabled = !hasHdr10p;
     }
   }
 
@@ -1379,7 +1429,10 @@ async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean
       metadataSelectEl.value = 'fromfile';
       if (!isUploadedFile) setHash('m', metadataSelectEl.value);
     }
-  } else if (metadataSelectEl.value === 'fromfile') {
+  } else if (
+    (metadataSelectEl.value === 'fromfile' && !hasAgtm) ||
+    (metadataSelectEl.value === AgtmMetadataType.HDR10P && !hasHdr10p)
+  ) {
     metadataSelectEl.value = kDefaultAgtmMetadataType;
     setHash('m', metadataSelectEl.value);
   }
@@ -2123,7 +2176,7 @@ async function generateDynamicMetadata(
   progressCallback?: (frame: number, total: number) => void,
   frameComputedCallback?: (
     metadata: AgtmMetadata | null,
-    stats: ComputedStats,
+    stats: ComputedStats | null,
     time: number,
   ) => void,
 ): Promise<Array<AgtmMetadata | null> | null> {
@@ -2157,6 +2210,8 @@ async function generateDynamicMetadata(
     });
 
     let averagedStats: ComputedStats | null = null;
+    const requiresStats = needsFrameStats(agtmMetadataType);
+
     for (let i = 0; i < framesToProcess; i++) {
       if (isDynamicAgtmPaused) {
         await new Promise<void>((resolve) => {
@@ -2173,29 +2228,31 @@ async function generateDynamicMetadata(
       const sample = videoTrack.samplesSortedByPresentationTime[i];
       const time = sample.presentationTimeSec;
 
-      await new Promise<void>((resolve) => {
-        tempVideo.onseeked = () => {
-          resolve();
-        };
-        tempVideo.currentTime = time;
-      });
+      if (requiresStats) {
+        await new Promise<void>((resolve) => {
+          tempVideo.onseeked = () => {
+            resolve();
+          };
+          tempVideo.currentTime = time;
+        });
 
-      const computed = await computeFrameStats(tempVideo, /*fullRange=*/ true);
-      if (!computed) {
-        return [];
-      }
-      if (!averagedStats) {
-        averagedStats = computed;
-      } else {
-        const kDefaultFramerate = 25;
-        // Weight applied for a framerate of kDefaultFramerate.
-        const kDefaultWeight = 0.125;
-        const framerate = getAverageFramerate(parsedMp4) ?? kDefaultFramerate;
-        const weight = Math.min(
-          kDefaultWeight * (kDefaultFramerate / framerate),
-          1.0,
-        );
-        averagedStats = averageStats(computed, averagedStats, weight);
+        const computed = await computeFrameStats(tempVideo, /*fullRange=*/ true);
+        if (!computed) {
+          return [];
+        }
+        if (!averagedStats) {
+          averagedStats = computed;
+        } else {
+          const kDefaultFramerate = 25;
+          // Weight applied for a framerate of kDefaultFramerate.
+          const kDefaultWeight = 0.125;
+          const framerate = getAverageFramerate(parsedMp4) ?? kDefaultFramerate;
+          const weight = Math.min(
+            kDefaultWeight * (kDefaultFramerate / framerate),
+            1.0,
+          );
+          averagedStats = averageStats(computed, averagedStats, weight);
+        }
       }
 
       const hdrReferenceWhite = hdrReferenceWhiteOverridden
@@ -2205,11 +2262,13 @@ async function generateDynamicMetadata(
         ? Number(baselineHeadroomSliderEl.value)
         : undefined;
 
+      const frameHdr10p = getHdr10pForTime(time);
       const metadata = await getAgtmForType(
         agtmMetadataType,
         averagedStats,
         hdrReferenceWhite,
         baselineHeadroomLinear,
+        frameHdr10p,
       );
       if (!metadata) {
         console.error(

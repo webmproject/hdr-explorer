@@ -26,12 +26,19 @@ import {QuadraticBezier} from './color_helpers/bezier';
 import {
   getMaxNits,
   PRIMARIES_REC2020,
+  TRANSFER_HLG,
   TRANSFER_JZ,
   TRANSFER_PQ,
   transferFromLinear,
   transferToLinear,
 } from './color_helpers/color_functions';
 import {linearToLogGain, logGainToLinear} from './color_helpers/gain_curve';
+import {
+  applyKneePointBezier,
+  guidedBezierCurveVector,
+  guidedKneePoint,
+  Hdr10pMetadata,
+} from './color_helpers/hdr10p';
 import {clamp, exp2} from './color_helpers/math_helpers';
 import {PiecewiseLinear} from './color_helpers/piecewise_linear';
 import {ComputedStats, getPercentile, ImageStats} from './image_stats';
@@ -296,9 +303,8 @@ function generateAgtmFromTmo(
   referenceWhite: number,
   tmoFactory: (targetHeadroomLinear: number) => ToneMappingOperator,
   controlPointsX: number[],
+  numCurves: number,
 ): AgtmMetadata {
-  const kNumCurves = 3;
-
   const agtm: AgtmMetadata = {
     hdr_reference_white: referenceWhite,
     gain_application_space_primaries: PRIMARIES_REC2020,
@@ -306,9 +312,9 @@ function generateAgtmFromTmo(
     altr: [],
   };
 
-  for (let i = 0; i < kNumCurves; ++i) {
+  for (let i = 0; i < numCurves; ++i) {
     const targetHeadroomLinear =
-      1 + (i * (contentHeadroomLinear - 1)) / kNumCurves;
+      1 + (i * (contentHeadroomLinear - 1)) / numCurves;
     const tmo = tmoFactory(targetHeadroomLinear);
     agtm.altr.push({
       headroom: Math.log2(targetHeadroomLinear),
@@ -476,10 +482,11 @@ function generateHistogramBased(
   const adjustedBins = bins.filter(
     (bin) => bin.binMax / referenceWhite > kMinXToAdjust,
   );
-  const avgFreq = adjustedBins.length > 0
-    ? adjustedBins.map((bin) => bin.freq[c]).reduce((a, b) => a + b, 0) /
-      adjustedBins.length
-    : 0;
+  const avgFreq =
+    adjustedBins.length > 0
+      ? adjustedBins.map((bin) => bin.freq[c]).reduce((a, b) => a + b, 0) /
+        adjustedBins.length
+      : 0;
 
   // Half luma and half maxRGB.
   // Combines the advantages of luma (tone mapping based on actual luminance)
@@ -633,11 +640,13 @@ function generateChrome(
     /*end=*/ contentHeadroomLinear,
   );
 
+  const kNumCurves = 3;
   return generateAgtmFromTmo(
     contentHeadroomLinear,
     referenceWhite,
     tmoFactory,
     controlPointsX,
+    kNumCurves,
   );
 }
 
@@ -716,12 +725,130 @@ function generateLinear(
     /*end=*/ contentHeadroomLinear,
   );
 
+  const kNumCurves = 3;
   return generateAgtmFromTmo(
     contentHeadroomLinear,
     referenceWhite,
     tmoFactory,
     controlPointsX,
+    kNumCurves,
   );
+}
+
+function getHdr10pContentMaxNits(
+  hdr10pMetadata: Hdr10pMetadata,
+  contentTransfer: number,
+): number {
+  const maxNits = getMaxNits(contentTransfer);
+  const dist08 = hdr10pMetadata.windows?.[0]?.distribution_values?.[8] ?? 0;
+  return dist08 * 0.00001 * maxNits;
+}
+
+// Tone Mapping Operator that renders HDR10+ metadata (SMPTE ST 2094-40).
+export class Hdr10pToneMapper implements ToneMappingOperator {
+  private readonly kvec: {x: number; y: number}; // guided knee point
+  private readonly p: number[]; // guided bezier curve anchors
+  private readonly norm: number; // normalizing factor (x max nits)
+
+  constructor(
+    hdr10pMetadata: Hdr10pMetadata,
+    private readonly referenceWhite: number,
+    private readonly targetHeadroomLinear: number,
+    contentTransfer: number = TRANSFER_PQ,
+  ) {
+    const t = hdr10pMetadata.targeted_system_display_maximum_luminance;
+    const window0 = hdr10pMetadata.windows?.[0];
+    const kvec = {
+      x: (window0.knee_point_x ?? 0) / 4095,
+      y: (window0.knee_point_y ?? 0) / 4095,
+    };
+    const anchors = window0.bezier_curve_anchors ?? [];
+    const numAnchors = window0.num_bezier_curve_anchors ?? anchors.length;
+    const pLen = numAnchors + 2; // +2 for the start and end points.
+    const p = new Array<number>(pLen);
+    p[0] = 0.0;
+    for (let i = 0; i < numAnchors; ++i) {
+      p[i + 1] = (anchors[i] ?? 0) / 1023;
+    }
+    p[pLen - 1] = 1.0;
+
+    const hM = getHdr10pContentMaxNits(hdr10pMetadata, contentTransfer);
+    const d = this.targetHeadroomLinear * this.referenceWhite;
+    this.norm = Math.max(d, hM);
+
+    this.kvec = guidedKneePoint(t, d, this.norm, kvec);
+    this.p = guidedBezierCurveVector(t, d, this.norm, pLen, p);
+  }
+
+  evaluate(x: number): number {
+    if (x <= 0 || this.norm <= 0) {
+      return 0;
+    }
+
+    const xNits = x * this.referenceWhite;
+    const xNorm = Math.min(1.0, xNits / this.norm);
+
+    const yNorm = applyKneePointBezier(this.kvec, this.p.length, this.p, xNorm);
+    const yLinearRaw = yNorm * this.targetHeadroomLinear;
+
+    // Not in the HDR10+ spec, but the AGTM binary format does not allow
+    // boosting values (because the sign of the gain is fixed).
+    return Math.min(yLinearRaw, x);
+  }
+}
+
+function generateHdr10p(
+  hdr10pMetadata: Hdr10pMetadata,
+  contentTransfer: number,
+  referenceWhiteOverride?: number,
+  baselineHeadroomLinearOverride?: number,
+): AgtmMetadata {
+  if (
+    !hdr10pMetadata.windows?.[0] ||
+    (hdr10pMetadata.targeted_system_display_maximum_luminance ?? 0) <= 0
+  ) {
+    // Invalid HDR10+ metadata (fairly unlikely), fall back to static default.
+    return kDefaultMetadata;
+  }
+
+  const referenceWhite = referenceWhiteOverride ?? 203;
+  const contentMaxNits = getHdr10pContentMaxNits(
+    hdr10pMetadata,
+    contentTransfer,
+  );
+  const contentHeadroomLinear = Math.max(
+    baselineHeadroomLinearOverride ?? contentMaxNits / referenceWhite,
+    1.0,
+  );
+
+  const tmoFactory = (targetHeadroomLinear: number) => {
+    return new Hdr10pToneMapper(
+      hdr10pMetadata,
+      referenceWhite,
+      targetHeadroomLinear,
+      contentTransfer,
+    );
+  };
+
+  const kNumControlPoints = 6;
+  const controlPointsX = generateControlPointsX(
+    kNumControlPoints,
+    /*power=*/ 2.0,
+    /*start=*/ 0.01,
+    /*end=*/ contentHeadroomLinear,
+  );
+
+  const kNumCurves = 5;
+  const agtm = generateAgtmFromTmo(
+    contentHeadroomLinear,
+    referenceWhite,
+    tmoFactory,
+    controlPointsX,
+    kNumCurves,
+  );
+  // Match HDR10+'s behavior which uses max(r, g, b).
+  agtm.altr[0].mix = {rgb: [0, 0, 0], max: 1, min: 0, channel: 0};
+  return agtm;
 }
 
 export function getStatsForAgtm(
@@ -747,6 +874,7 @@ export async function getAgtm(
   stats?: ComputedStats,
   hdrReferenceWhite?: number,
   baselineHeadroomLinear?: number,
+  hdr10pMetadata?: Hdr10pMetadata | null,
 ): Promise<AgtmMetadata> {
   // Types that don't require stats.
   switch (type) {
@@ -760,11 +888,24 @@ export async function getAgtm(
       }
       return metadata;
     }
+    case AgtmMetadataType.HDR10P: {
+      if (!hdr10pMetadata) {
+        return kDefaultMetadata;
+      }
+      return generateHdr10p(
+        hdr10pMetadata,
+        contentTransfer,
+        hdrReferenceWhite,
+        baselineHeadroomLinear,
+      );
+    }
     default:
       break;
   }
   if (!stats) {
-    throw new Error('Stats are required for this metadata type.');
+    throw new Error(
+      `Stats are required for AgtmMetadataType: ${kAgtmMetadataTypeNames[type]}`,
+    );
   }
   switch (type) {
     case AgtmMetadataType.DEFAULT_ADJUSTED:
@@ -855,6 +996,7 @@ export async function getAgtm(
 export function needsStats(metadataType: AgtmMetadataType): boolean {
   return !(
     metadataType === AgtmMetadataType.DEFAULT ||
+    metadataType === AgtmMetadataType.HDR10P ||
     metadataType.endsWith('static') ||
     metadataType.startsWith('gain_map')
   );

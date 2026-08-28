@@ -226,3 +226,15 @@ export function newtonSolve(
 
   return currentX;
 }
+
+/** Computes the binomial coefficient n choose k (n! / (k! * (n - k)!)). */
+export function binomialCoefficient(n: number, k: number): number {
+  if (k < 0 || k > n) {
+    return 0.0;
+  }
+  let res = 1.0;
+  for (let i = 1; i <= k; ++i) {
+    res = (res * (n - i + 1)) / i;
+  }
+  return res;
+}

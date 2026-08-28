@@ -22,8 +22,10 @@ import {exp2} from '../color_helpers/math_helpers';
 import {BaseWebgl2Renderer} from './base_renderer';
 
 // Implementation of section A.4.3
-// Reference Method for Receiver-side Tone Mapping using ST 2094-40 Metadata of
-// https://www.atsc.org/wp-content/uploads/2019/09/S34-1-614r4-A341-Amendment-2094-40.pdf
+// Reference Method for Receiver-side Tone Mapping using ST 2094-40 Metadata
+// from Annex F of
+// https://www.atsc.org/wp-content/uploads/2024/04/A341-2024-04-Video-HEVC.pdf
+
 const fs =
   `#version 300 es
   precision highp float;
@@ -181,7 +183,7 @@ const fs =
       //   The condition for slope continuity at the knee point is given as:
       //     P_1 = 1/N * K_y/K_x * (1-K_x)/(1-Ky)
       // Slope continuity is only necessary if the knee point part exists.
-      if (kvec.x > 0.0) {
+      if (kvec.x > 0.0 && kvec.y < 1.0 && kvec.x < 1.0) {
         continuous_p[1] = 1.0 / float(p_len - 1) * (kvec.y / kvec.x) *
                                 (1.0 - kvec.x) / (1.0 - kvec.y);
       }
@@ -215,18 +217,15 @@ const fs =
     //   - Guided Bezier Curve Anchors
     // The knee point part exists only if the knee point vector is not null.
     if (x < kvec.x) {
-        return x * (kvec.y / kvec.x);
+        return kvec.x > 0.0 ? x * (kvec.y / kvec.x) : x;
     } else if (x >= 1.0) {
         return 1.0;
     } else {
         float p_slope_continuity[MAX_P_LEN];
         applySlopeContinuity(kvec, p_len, p, p_slope_continuity);
 
-        for (int i = 2; i < p_len; ++i) {
-          p_slope_continuity[i] = p[i];
-        }
-
-        float t = (x - kvec.x) / (1.0 - kvec.x);
+        float denom = 1.0 - kvec.x;
+        float t = denom > 0.0 ? (x - kvec.x) / denom : 0.0;
         float y = applyBezier(t, p_len, p_slope_continuity);
         return kvec.y + y * (1.0 - kvec.y);
     }

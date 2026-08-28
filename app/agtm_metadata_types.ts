@@ -27,6 +27,7 @@ export const AgtmMetadataType = {
   HISTOGRAM_BASED_CHROME: 'histogram_based_chrome',
   HISTOGRAM_BASED_CHROME_203: 'histogram_based_chrome_203',
   HISTOGRAM_BASED: 'histogram_based',
+  HDR10P: 'hdr10p',
 } as const;
 
 export type AgtmMetadataType =
@@ -50,6 +51,7 @@ const AGTM_GENERATOR_VERSIONS: Record<AgtmMetadataType, string> = {
   [AgtmMetadataType.HISTOGRAM_BASED_CHROME]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED_CHROME_203]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED]: 'v1.2.0',
+  [AgtmMetadataType.HDR10P]: 'v1.0.0',
 };
 
 export function getAgtmGeneratorVersion(type: AgtmMetadataType): string {
@@ -76,4 +78,5 @@ export const kAgtmMetadataTypeNames: Record<AgtmMetadataType, string> = {
   [AgtmMetadataType.HISTOGRAM_BASED_CHROME_203]:
     'Histogram adjusted Chrome Reinhard White=203',
   [AgtmMetadataType.HISTOGRAM_BASED]: 'Histogram adjusted linear',
+  [AgtmMetadataType.HDR10P]: 'From HDR10+',
 };
