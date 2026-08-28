@@ -25,6 +25,7 @@ import {
   getMaxNits,
   getMaxSdrRelative,
   getPrimariesName,
+  PRIMARIES_SRGB,
   primariesConvert,
   TRANSFER_HLG,
   TRANSFER_PQ,
@@ -252,6 +253,11 @@ export class CurveEditor extends Base2dGraphRenderer {
       getGainApplicationPrimaries(metadata),
       primaries,
     );
+    const tonemappedRgbSrgb = primariesConvert(
+      tonemappedRgbGainSpace,
+      getGainApplicationPrimaries(metadata),
+      PRIMARIES_SRGB,
+    );
 
     const fmt4 = (x: number) => x.toFixed(4);
     const fmt2 = (x: number) => x.toFixed(2);
@@ -273,7 +279,8 @@ export class CurveEditor extends Base2dGraphRenderer {
       `Component mix: ${fmt4s(mixValues)}\n` +
       `Gain multipliers: ${fmt4s(gainMultipliers)}\n` +
       `Tone mapped SDR-relative in gain space (${gainPrimariesStr}): ${fmt4s(tonemappedRgbGainSpace)}\n` +
-      `Tone mapped SDR-relative ${primariesStr}): ${fmt4s(tonemappedRgbContentSpace)}\n` +
+      `Tone mapped SDR-relative (${primariesStr}): ${fmt4s(tonemappedRgbContentSpace)}\n` +
+      `Tone mapped SDR-relative in sRGB (scRGB): ${fmt4s(tonemappedRgbSrgb)}\n` +
       `Tone mapped in nits (${primariesStr}): ${fmt2s(tonemappedRgbContentSpaceNits)} nits`
     );
   }
