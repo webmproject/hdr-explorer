@@ -359,6 +359,7 @@ const sdrBloatParentEls = Array.from(
 ) as HTMLElement[];
 const playPauseEl = getButtonElement('PlayPause');
 const loopButtonEl = getButtonElement('LoopButton');
+const muteButtonEl = getButtonElement('MuteButton');
 const nativeHeadroomSliderEl = getHTMLElement('NativeHeadroomArrow');
 const nativeHeadroomLinearEl = getHTMLElement('NativeHeadroomLinear');
 const nativeHeadroomLog2El = getHTMLElement('NativeHeadroomLog2');
@@ -1848,6 +1849,15 @@ async function updateStateFromHash() {
   myVideoEl.loop = getHash('loop') === '1';
   loopButtonEl.classList.toggle('active', myVideoEl.loop);
 
+  const updateMuteButtonState = () => {
+    muteButtonEl.classList.toggle('active', myVideoEl.muted);
+    muteButtonEl.textContent = myVideoEl.muted ? '\u{1F507}' : '\u{1F50A}';
+    muteButtonEl.title = myVideoEl.muted ? 'Unmute' : 'Mute';
+  };
+  myVideoEl.muted = getHash('mute') === '1';
+  updateMuteButtonState();
+  myVideoEl.addEventListener('volumechange', updateMuteButtonState);
+
   const lumaMode = getHash('luma_mode');
   if (lumaMode) {
     lumaModeSelectEl.value = lumaMode;
@@ -3176,6 +3186,15 @@ populateContentDropdown();
       setHash('loop', '1');
     } else {
       unsetHash('loop');
+    }
+  });
+
+  muteButtonEl.addEventListener('click', () => {
+    myVideoEl.muted = !myVideoEl.muted;
+    if (myVideoEl.muted) {
+      setHash('mute', '1');
+    } else {
+      unsetHash('mute');
     }
   });
 
