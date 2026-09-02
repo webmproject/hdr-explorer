@@ -1362,7 +1362,11 @@ function updateRenderersImage() {
   }
 }
 
-async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean) {
+async function decodedMediaCallback(
+  media: DecodedMedia,
+  isUploadedFile: boolean,
+  isFirstFrame: boolean,
+) {
   if (decodedMedia) {
     decodedMedia.imageBitmap.close();
   }
@@ -1401,7 +1405,7 @@ async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean
   getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
 
   getHTMLElement('MediaInfoText').textContent = getMediaInfoString(media);
-  if (isUploadedFile) {
+  if (isUploadedFile && isFirstFrame) {
     mediaInfoDialogEl.showModal();
   }
 
@@ -1423,13 +1427,13 @@ async function decodedMediaCallback(media: DecodedMedia, isUploadedFile: boolean
     }
   }
 
-  // Default to metadata type to 'fromfile' if the file has AGTM metadata.
-  if (hasAgtm) {
-    if (metadataSelectEl.value !== 'fromfile') {
-      metadataSelectEl.value = 'fromfile';
-      if (!isUploadedFile) setHash('m', metadataSelectEl.value);
-    }
-  } else if (
+  // Default to metadata type 'fromfile' when loading a new file with AGTM metadata.
+  if (isFirstFrame && hasAgtm && metadataSelectEl.value !== 'fromfile') {
+    metadataSelectEl.value = 'fromfile';
+    setHash('m', metadataSelectEl.value);
+  }
+
+  if (
     (metadataSelectEl.value === 'fromfile' && !hasAgtm) ||
     (metadataSelectEl.value === AgtmMetadataType.HDR10P && !hasHdr10p)
   ) {
@@ -1486,7 +1490,7 @@ async function onFile(name: string, f: Blob, isUploadedFile: boolean = false) {
   try {
     let isFirstCallback = true;
     const callbackWrapper = async (media: DecodedMedia) => {
-      await decodedMediaCallback(media, isUploadedFile && isFirstCallback);
+      await decodedMediaCallback(media, isUploadedFile, isFirstCallback);
       isFirstCallback = false;
     };
 
