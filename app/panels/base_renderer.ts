@@ -426,6 +426,11 @@ export abstract class Base2dRenderer implements Renderer {
   }
 }
 
+export const GRAPH_MARGIN_LEFT = 80;
+export const GRAPH_MARGIN_RIGHT = 100;
+export const GRAPH_MARGIN_TOP = 40;
+export const GRAPH_MARGIN_BOTTOM = 100;
+
 export abstract class Base2dGraphRenderer extends Base2dRenderer {
   protected graphBottomLeft: Point2;
   protected graphTopRight: Point2;
@@ -433,11 +438,36 @@ export abstract class Base2dGraphRenderer extends Base2dRenderer {
   protected readonly defaultGraphBottomLeft: Point2;
   protected readonly defaultGraphTopRight: Point2;
 
+  get graphAreaLeftX(): number {
+    return this.defaultGraphBottomLeft.x;
+  }
+  get graphAreaRightX(): number {
+    return this.defaultGraphTopRight.x;
+  }
+  get graphAreaTopY(): number {
+    return this.defaultGraphTopRight.y;
+  }
+  get graphAreaBottomY(): number {
+    return this.defaultGraphBottomLeft.y;
+  }
+  get graphAreaWidth(): number {
+    return this.defaultGraphTopRight.x - this.defaultGraphBottomLeft.x;
+  }
+  get graphAreaHeight(): number {
+    return this.defaultGraphBottomLeft.y - this.defaultGraphTopRight.y;
+  }
+
   constructor(canvas: HTMLCanvasElement) {
     super(canvas, /* rendersPicture= */ false);
 
-    this.defaultGraphBottomLeft = {x: 80, y: this.canvas.height - 100};
-    this.defaultGraphTopRight = {x: this.canvas.width - 100, y: 40};
+    this.defaultGraphBottomLeft = {
+      x: GRAPH_MARGIN_LEFT,
+      y: this.canvas.height - GRAPH_MARGIN_BOTTOM,
+    };
+    this.defaultGraphTopRight = {
+      x: this.canvas.width - GRAPH_MARGIN_RIGHT,
+      y: GRAPH_MARGIN_TOP,
+    };
     this.graphBottomLeft = {...this.defaultGraphBottomLeft};
     this.graphTopRight = {...this.defaultGraphTopRight};
 
@@ -460,8 +490,7 @@ export abstract class Base2dGraphRenderer extends Base2dRenderer {
   }
 
   protected constrainView() {
-    const defaultWidth =
-      this.defaultGraphTopRight.x - this.defaultGraphBottomLeft.x;
+    const defaultWidth = this.graphAreaWidth;
     const currentWidth = this.graphTopRight.x - this.graphBottomLeft.x;
 
     // Prevent zooming out beyond default size.
@@ -552,6 +581,13 @@ export abstract class Base2dGraphRenderer extends Base2dRenderer {
 
     this.constrainView();
 
+    this.draw();
+  }
+
+  resetView() {
+    this.graphBottomLeft = {...this.defaultGraphBottomLeft};
+    this.graphTopRight = {...this.defaultGraphTopRight};
+    this.constrainView();
     this.draw();
   }
 }

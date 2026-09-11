@@ -335,6 +335,9 @@ const resetGainApplicationSpacePrimariesButtonEl = getButtonElement(
 const resetAllButtonEl = getButtonElement('ResetAllButton');
 const showGainCurveEl = getInputElement('ShowGainCurve');
 const showControlPointsEl = getInputElement('ShowControlPoints');
+const resetCurveEditorViewButtonEl = getButtonElement(
+  'ResetCurveEditorViewButton',
+);
 const metadataSelectEl = getSelectElement('Metadata');
 const agtmLutSizeInputEl = getInputElement('AgtmLutSize');
 const agtm1dLutSizeInputEl = getInputElement('Agtm1dLutSize');
@@ -3488,6 +3491,11 @@ populateContentDropdown();
     } else {
       setHash('points', '0');
     }
+  });
+
+  resetCurveEditorViewButtonEl.addEventListener('click', () => {
+    const curveEditor = getRenderer('curves', CurveEditor);
+    curveEditor?.resetView();
   });
 
   statsModesEl.querySelectorAll('input[name="stats_mode"]').forEach((radio) => {

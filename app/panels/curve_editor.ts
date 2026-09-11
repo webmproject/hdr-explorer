@@ -62,7 +62,18 @@ function parseRgbTriplet(str: string): [number, number, number] | null {
   return rgb;
 }
 
-const kPointSelectMaxDist = 12 * 12;
+const POINT_SELECT_MAX_DIST = 12 * 12;
+const AXIS_LABEL_OVERFLOW_MARGIN = 10;
+const NITS_TICK_LENGTH = 10;
+const LINE_DASH_PATTERN = [10, 10];
+const POINT_SELECTION_MARGIN = 10;
+const MIN_PIXEL_DIST = 1;
+
+const DEFAULT_GRAPH_MAX_X_VALUE = 16;
+const DEFAULT_GRAPH_MAX_Y_VALUE = 16;
+const DEFAULT_GAIN_CURVE_MAX_Y_VALUE = 6;
+const MAX_ALLOWED_X = 64;
+const MAX_ALLOWED_Y = 64;
 
 export class CurveEditor extends Base2dGraphRenderer {
   curve: PiecewiseCubic | null = null;
@@ -71,9 +82,7 @@ export class CurveEditor extends Base2dGraphRenderer {
   metadata: AgtmMetadata | null = null;
   altrIndex = 0;
   viewScale: Point2;
-  private readonly graphMaxXValue = 16;
-  private readonly graphMaxYValue = 16;
-  private readonly defaultViewScale: Point2;
+  private defaultViewScale: Point2;
   private dragIndex: number | null = null;
   private showGainCurve = false;
   private showControlPoints = true;
@@ -117,12 +126,8 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.modelChangedCallback = (param) => {};
 
     this.defaultViewScale = {
-      x:
-        (this.defaultGraphTopRight.x - this.defaultGraphBottomLeft.x) /
-        this.graphMaxXValue,
-      y:
-        (this.defaultGraphTopRight.y - this.defaultGraphBottomLeft.y) /
-        this.graphMaxYValue,
+      x: this.graphAreaWidth / DEFAULT_GRAPH_MAX_X_VALUE,
+      y: -this.graphAreaHeight / DEFAULT_GRAPH_MAX_Y_VALUE,
     };
 
     this.graphBottomLeft = {...this.defaultGraphBottomLeft};
@@ -305,6 +310,7 @@ export class CurveEditor extends Base2dGraphRenderer {
 
   setShowGainCurve(show: boolean) {
     this.showGainCurve = show;
+    this.resetView();
   }
 
   setShowControlPoints(show: boolean) {
@@ -374,15 +380,22 @@ export class CurveEditor extends Base2dGraphRenderer {
     return pModel;
   }
 
+  clipToGraphArea() {
+    this.context.beginPath();
+    this.context.rect(
+      this.graphAreaLeftX,
+      this.graphAreaTopY,
+      this.graphAreaWidth,
+      this.graphAreaHeight,
+    );
+    this.context.clip();
+  }
+
   //////////////////////////////////////////////////////////////////////////////
   // Drawing functions.
   drawGrid() {
     this.context.save();
 
-    const graphAreaTopY = 40;
-    const graphAreaBottomY = this.canvas.height - 100;
-    const graphAreaLeftX = this.defaultGraphBottomLeft.x;
-    const graphAreaRightX = this.canvas.width - 100;
     const p0 = this.linearToView({x: 0, y: 0});
 
     // Axis titles
@@ -391,14 +404,14 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.context.textAlign = 'center';
     this.context.fillText(
       'Input (SDR-relative)',
-      graphAreaLeftX + (graphAreaRightX - graphAreaLeftX) / 2,
+      this.graphAreaLeftX + this.graphAreaWidth / 2,
       this.canvas.height - 40,
     );
 
     this.context.save();
     this.context.translate(
       30,
-      graphAreaTopY + (graphAreaBottomY - graphAreaTopY) / 2,
+      this.graphAreaTopY + this.graphAreaHeight / 2,
     );
     this.context.rotate(-Math.PI / 2);
     this.context.textAlign = 'center';
@@ -410,14 +423,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.context.restore();
 
     this.context.save(); // for clipping
-    this.context.beginPath();
-    this.context.rect(
-      graphAreaLeftX,
-      graphAreaTopY,
-      graphAreaRightX - graphAreaLeftX,
-      graphAreaBottomY - graphAreaTopY,
-    );
-    this.context.clip();
+    this.clipToGraphArea();
 
     // Draw dark axes.
     {
@@ -426,10 +432,10 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.context.beginPath();
       // The Y axis is now a permanent fixture on the left. The line for x=0 is
       // drawn as a grid line.
-      this.context.moveTo(graphAreaLeftX, graphAreaBottomY);
-      this.context.lineTo(graphAreaLeftX, graphAreaTopY);
-      this.context.moveTo(graphAreaLeftX, p0.y);
-      this.context.lineTo(graphAreaRightX, p0.y);
+      this.context.moveTo(this.graphAreaLeftX, this.graphAreaBottomY);
+      this.context.lineTo(this.graphAreaLeftX, this.graphAreaTopY);
+      this.context.moveTo(this.graphAreaLeftX, p0.y);
+      this.context.lineTo(this.graphAreaRightX, p0.y);
       this.context.stroke();
     }
 
@@ -446,8 +452,8 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.context.lineWidth =
         Math.abs(i) < 1e-9 || Math.abs(i - 1) < 1e-9 ? 2 : 1;
       this.context.beginPath();
-      this.context.moveTo(pi.x, graphAreaBottomY);
-      this.context.lineTo(pi.x, graphAreaTopY);
+      this.context.moveTo(pi.x, this.graphAreaBottomY);
+      this.context.lineTo(pi.x, this.graphAreaTopY);
       this.context.stroke();
     }
 
@@ -464,8 +470,8 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.context.strokeStyle = '#0008';
       this.context.lineWidth = Math.abs(i - 1) < 1e-9 ? 2 : 1;
       this.context.beginPath();
-      this.context.moveTo(graphAreaLeftX, pi.y);
-      this.context.lineTo(graphAreaRightX, pi.y);
+      this.context.moveTo(this.graphAreaLeftX, pi.y);
+      this.context.lineTo(this.graphAreaRightX, pi.y);
       this.context.stroke();
     }
     this.context.restore(); // end clipping
@@ -478,6 +484,12 @@ export class CurveEditor extends Base2dGraphRenderer {
       if (i < 0) continue;
       if (Math.abs(i) < 1e-9) continue;
       const pi = this.linearToView({x: i, y: 0});
+      if (
+        pi.x < this.graphAreaLeftX - AXIS_LABEL_OVERFLOW_MARGIN ||
+        pi.x > this.graphAreaRightX + AXIS_LABEL_OVERFLOW_MARGIN
+      ) {
+        continue;
+      }
       const label = Number.isInteger(i) ? i.toFixed(0) : i.toFixed(1);
       this.context.fillText(label, pi.x - 5, p0.y + 20);
     }
@@ -487,8 +499,14 @@ export class CurveEditor extends Base2dGraphRenderer {
       if (i < 0 && !this.showGainCurve) continue;
       if (Math.abs(i) < 1e-9) continue;
       const pi = this.linearToView({x: 0, y: i});
+      if (
+        pi.y < this.graphAreaTopY - AXIS_LABEL_OVERFLOW_MARGIN ||
+        pi.y > this.graphAreaBottomY + AXIS_LABEL_OVERFLOW_MARGIN
+      ) {
+        continue;
+      }
       const label = Number.isInteger(i) ? i.toFixed(0) : i.toFixed(1);
-      this.context.fillText(label, graphAreaLeftX - 40, pi.y + 5);
+      this.context.fillText(label, this.graphAreaLeftX - 40, pi.y + 5);
     }
 
     if (!this.metadata) {
@@ -512,7 +530,7 @@ export class CurveEditor extends Base2dGraphRenderer {
 
           tt.context.beginPath();
           tt.context.moveTo(p.x, p.y);
-          tt.context.lineTo(p.x, p.y + 10);
+          tt.context.lineTo(p.x, p.y + NITS_TICK_LENGTH);
           tt.context.stroke();
         };
         drawNits(this, 1);
@@ -527,19 +545,22 @@ export class CurveEditor extends Base2dGraphRenderer {
   }
   drawIdentity() {
     this.context.save();
-    this.context.setLineDash([10, 10]);
+    this.clipToGraphArea();
+
+    this.context.setLineDash(LINE_DASH_PATTERN);
     this.context.lineWidth = 2;
     this.context.strokeStyle = '#0008';
 
     this.context.beginPath();
+    const p0 = this.linearToView({x: 0, y: 0});
+    // Draw up to an arbitrary large value (1000) which will get clipped by the
+    // clip rect.
     if (this.showGainCurve) {
-      const p0 = this.linearToView({x: 0, y: 0});
-      const p1 = this.linearToView({x: 16, y: 0});
+      const p1 = this.linearToView({x: 1000, y: 0});
       this.context.moveTo(p0.x, p0.y);
       this.context.lineTo(p1.x, p1.y);
     } else {
-      const p0 = this.linearToView({x: 0, y: 0});
-      const p1 = this.linearToView({x: 16, y: 16});
+      const p1 = this.linearToView({x: 1000, y: 1000});
       this.context.moveTo(p0.x, p0.y);
       this.context.lineTo(p1.x, p1.y);
     }
@@ -627,6 +648,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     const curveMax = altrMax ? new PiecewiseCubic(altrMax.curve) : null;
 
     this.context.save();
+    this.clipToGraphArea();
 
     // Draw control points only if a single curve was requested.
     if (altrMax == null && this.showControlPoints) {
@@ -654,7 +676,8 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.context.beginPath();
       this.context.lineWidth = 4;
       this.context.strokeStyle = color + 'A0';
-      for (let vX = this.graphBottomLeft.x; vX < this.canvas.width; vX += 2) {
+      const startX = Math.max(this.graphBottomLeft.x, this.graphAreaLeftX);
+      for (let vX = startX; vX <= this.graphAreaRightX; vX += 2) {
         const x = this.viewToModel(vX).x;
         let y = wMin * curveMin.evaluate(x).y!;
         if (altrMax != null) {
@@ -662,25 +685,21 @@ export class CurveEditor extends Base2dGraphRenderer {
         }
         const clampVal = undefined; // Clamping disabled for now. Otherwise would be: exp2(headroom!)
         const p = this.modelToView({x, y}, clampVal);
-        if (x === 0) {
+        if (vX === startX) {
           this.context.moveTo(p.x, p.y);
         } else {
           this.context.lineTo(p.x, p.y);
         }
       }
       this.context.stroke();
-    }
 
-    // Draw the headroom we are targeting.
-    if (!this.showGainCurve) {
-      {
-        const x0 = this.graphBottomLeft.x;
-        const x1 = this.canvas.width;
+      // Draw the headroom we are targeting.
+      if (!this.showGainCurve) {
         const y = this.graphBottomLeft.y + this.viewScale.y * exp2(headroom!);
-        this.context.setLineDash([10, 10]);
+        this.context.setLineDash(LINE_DASH_PATTERN);
         this.context.beginPath();
-        this.context.moveTo(x0, y);
-        this.context.lineTo(x1, y);
+        this.context.moveTo(startX, y);
+        this.context.lineTo(this.graphAreaRightX, y);
         this.context.stroke();
       }
     }
@@ -700,14 +719,42 @@ export class CurveEditor extends Base2dGraphRenderer {
   }
 
   protected override constrainView() {
+    const defaultWidth = this.graphAreaWidth;
+    const defaultHeight = this.graphAreaHeight;
+
+    const maxAllowedX = Math.max(MAX_ALLOWED_X, DEFAULT_GRAPH_MAX_X_VALUE);
+    const minViewScaleX = defaultWidth / maxAllowedX;
+    const maxViewScaleX = defaultWidth / 0.05;
+
+    this.viewScale.x = clamp(this.viewScale.x, minViewScaleX, maxViewScaleX);
+
+    const maxAllowedY = this.showGainCurve
+      ? DEFAULT_GAIN_CURVE_MAX_Y_VALUE
+      : Math.max(MAX_ALLOWED_Y, DEFAULT_GRAPH_MAX_Y_VALUE);
+    const minViewScaleYMag = Math.abs(defaultHeight) / maxAllowedY;
+    const maxViewScaleYMag = Math.abs(defaultHeight) / 0.05;
+
+    const currentViewScaleYMag = clamp(
+      Math.abs(this.viewScale.y),
+      minViewScaleYMag,
+      maxViewScaleYMag,
+    );
+    this.viewScale.y = -currentViewScaleYMag;
+
+    // Constrain horizontal panning:
+    // Origin (x = 0) cannot move right of the left axis.
+    if (this.graphBottomLeft.x > this.graphAreaLeftX) {
+      this.graphBottomLeft.x = this.graphAreaLeftX;
+    }
+    // Rightmost visible point cannot move left of the right boundary.
+    const rightEdgeX = this.graphBottomLeft.x + this.viewScale.x * maxAllowedX;
+    if (rightEdgeX < this.graphAreaRightX) {
+      this.graphBottomLeft.x += this.graphAreaRightX - rightEdgeX;
+    }
+
     this.graphTopRight = {
-      x: this.graphBottomLeft.x + this.viewScale.x * this.graphMaxXValue,
-      y: this.graphBottomLeft.y + this.viewScale.y * this.graphMaxYValue,
-    };
-    super.constrainView();
-    this.viewScale = {
-      x: (this.graphTopRight.x - this.graphBottomLeft.x) / this.graphMaxXValue,
-      y: (this.graphTopRight.y - this.graphBottomLeft.y) / this.graphMaxYValue,
+      x: this.graphBottomLeft.x + this.viewScale.x * DEFAULT_GRAPH_MAX_X_VALUE,
+      y: this.graphBottomLeft.y + this.viewScale.y * DEFAULT_GRAPH_MAX_Y_VALUE,
     };
   }
 
@@ -725,7 +772,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     );
 
     const p0 = this.graphBottomLeft;
-    const pMax = {x: this.canvas.width - 100, y: 40};
+    const pMax = {x: this.graphAreaRightX, y: this.graphAreaTopY};
 
     const drawLine = (xValue: number, color: string) => {
       const x = this.linearToView({x: xValue, y: 0}).x;
@@ -756,8 +803,6 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.updateCustomColorInfo();
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    const graphTopY = 40;
-    const graphBottomY = this.canvas.height - 100;
     if (this.showGainCurve && this.metadata) {
       let minY = Infinity;
       let maxY = -Infinity;
@@ -769,17 +814,18 @@ export class CurveEditor extends Base2dGraphRenderer {
       }
       if (maxY <= 0.1) {
         // All points are at or below y=0. Move the origin up.
-        this.graphBottomLeft.y = graphTopY;
+        this.graphBottomLeft.y = this.graphAreaTopY;
       } else if (minY < -0.1) {
         // Curve crosses y=0. Center the origin.
-        this.graphBottomLeft.y = graphTopY + (graphBottomY - graphTopY) / 2;
+        this.graphBottomLeft.y =
+          this.graphAreaTopY + this.graphAreaHeight / 2;
       } else {
         // All points are above y=0. Origin at bottom.
-        this.graphBottomLeft.y = graphBottomY;
+        this.graphBottomLeft.y = this.graphAreaBottomY;
       }
     } else {
       // Default for tone map view.
-      this.graphBottomLeft.y = graphBottomY;
+      this.graphBottomLeft.y = this.graphAreaBottomY;
     }
 
     this.drawGrid();
@@ -816,13 +862,21 @@ export class CurveEditor extends Base2dGraphRenderer {
     let bestIndex: number | null = null;
     for (let i = 0; i < this.curve!.getControlPoints().length; ++i) {
       const viewPointI = this.modelToView(this.curve!.getControlPoints()[i]);
+      if (
+        viewPointI.x < this.graphAreaLeftX - POINT_SELECTION_MARGIN ||
+        viewPointI.x > this.graphAreaRightX + POINT_SELECTION_MARGIN ||
+        viewPointI.y < this.graphAreaTopY - POINT_SELECTION_MARGIN ||
+        viewPointI.y > this.graphAreaBottomY + POINT_SELECTION_MARGIN
+      ) {
+        continue;
+      }
       const dist = vec2Dist(viewPointI, viewPoint);
       if (bestDist == null || dist < bestDist) {
         bestIndex = i;
         bestDist = dist;
       }
     }
-    if (!bestDist || bestDist > kPointSelectMaxDist) {
+    if (!bestDist || bestDist > POINT_SELECT_MAX_DIST) {
       return null;
     }
     return bestIndex;
@@ -830,6 +884,16 @@ export class CurveEditor extends Base2dGraphRenderer {
   override mouseDown(e: MouseEvent) {
     if (!this.curve) return;
     const viewPoint = this.getViewPoint(e);
+
+    // Ignore clicks outside the graph area.
+    if (
+      viewPoint.x < this.graphAreaLeftX ||
+      viewPoint.x > this.graphAreaRightX ||
+      viewPoint.y < this.graphAreaTopY ||
+      viewPoint.y > this.graphAreaBottomY
+    ) {
+      return;
+    }
 
     // Right click to delete
     if (e.button === 2) {
@@ -853,7 +917,7 @@ export class CurveEditor extends Base2dGraphRenderer {
       const curveViewPoint = this.modelToView(curveModelPoint);
       const dist = vec2Dist(viewPoint, curveViewPoint);
 
-      if (dist < kPointSelectMaxDist) {
+      if (dist < POINT_SELECT_MAX_DIST) {
         const newPoint = this.viewToModel(
           viewPoint.x,
           viewPoint.y,
@@ -935,9 +999,8 @@ export class CurveEditor extends Base2dGraphRenderer {
       }
       // Prevent dragging points too close to the axes, which can cause
       // viewToModel to return NaN coordinates.
-      const kMinPixelDist = 1;
-      viewNew.x = Math.max(viewNew.x, this.graphBottomLeft.x + kMinPixelDist);
-      viewNew.y = Math.min(viewNew.y, this.graphBottomLeft.y - kMinPixelDist);
+      viewNew.x = Math.max(viewNew.x, this.graphBottomLeft.x + MIN_PIXEL_DIST);
+      viewNew.y = Math.min(viewNew.y, this.graphBottomLeft.y - MIN_PIXEL_DIST);
 
       if (
         viewNew.x !== viewOld.x ||
@@ -1006,5 +1069,16 @@ export class CurveEditor extends Base2dGraphRenderer {
   override mouseUpOrLeave() {
     this.dragIndex = null;
     this.dragViewPoint = null;
+  }
+
+  override resetView() {
+    this.defaultViewScale = {
+      x: this.graphAreaWidth / DEFAULT_GRAPH_MAX_X_VALUE,
+      y: -this.graphAreaHeight / DEFAULT_GRAPH_MAX_Y_VALUE,
+    };
+    this.graphBottomLeft = {...this.defaultGraphBottomLeft};
+    this.viewScale = {...this.defaultViewScale};
+    this.constrainView();
+    this.draw();
   }
 }
