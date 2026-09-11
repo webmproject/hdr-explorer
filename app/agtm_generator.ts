@@ -313,11 +313,13 @@ function generateAgtmFromTmo(
   };
 
   for (let i = 0; i < numCurves; ++i) {
-    const targetHeadroomLinear =
-      1 + (i * (contentHeadroomLinear - 1)) / numCurves;
+    // Space out curves evenly in log space.
+    const targetHeadroomLog2 =
+      i * Math.log2(contentHeadroomLinear) / numCurves;
+    const targetHeadroomLinear = exp2(targetHeadroomLog2);
     const tmo = tmoFactory(targetHeadroomLinear);
     agtm.altr.push({
-      headroom: Math.log2(targetHeadroomLinear),
+      headroom: targetHeadroomLog2,
       mix: {rgb: [0, 0, 0], max: 1, min: 0, channel: 0},
       curve: toGainCurve(controlPointsX, tmo),
     });

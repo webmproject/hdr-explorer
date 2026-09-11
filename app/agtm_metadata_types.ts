@@ -43,15 +43,15 @@ const AGTM_GENERATOR_VERSIONS: Record<AgtmMetadataType, string> = {
   [AgtmMetadataType.DEFAULT_ADJUSTED]: 'v1.1.0',
   [AgtmMetadataType.RWTMO]: 'v1.0.0',
   [AgtmMetadataType.RWTMO_WHITE]: 'v1.1.0',
-  [AgtmMetadataType.CHROME]: 'v1.0.0',
-  [AgtmMetadataType.CHROME_WHITE]: 'v1.1.0',
-  [AgtmMetadataType.LINEAR]: 'v1.1.0',
-  [AgtmMetadataType.LINEAR_PQ]: 'v1.1.0',
+  [AgtmMetadataType.CHROME]: 'v1.1.0',
+  [AgtmMetadataType.CHROME_WHITE]: 'v1.2.0',
+  [AgtmMetadataType.LINEAR]: 'v1.2.0',
+  [AgtmMetadataType.LINEAR_PQ]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED_RWTMO]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED_CHROME]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED_CHROME_203]: 'v1.2.0',
   [AgtmMetadataType.HISTOGRAM_BASED]: 'v1.2.0',
-  [AgtmMetadataType.HDR10P]: 'v1.0.0',
+  [AgtmMetadataType.HDR10P]: 'v1.1.0',
 };
 
 export function getAgtmGeneratorVersion(type: AgtmMetadataType): string {
