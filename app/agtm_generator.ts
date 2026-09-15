@@ -155,8 +155,6 @@ function getRealBaselineHeadroomLinear(
   );
 }
 
-const kAllowBoosting = false;
-
 /** Scales AGTM metadata based on the maximum pixel values in the image. */
 function adaptMetadataWithStats(
   metadata: AgtmMetadata,
@@ -193,7 +191,10 @@ function adaptMetadataWithStats(
       if (linear.m !== undefined) {
         linear.m *= slopeScale;
       }
-      if (!kAllowBoosting && linear.y > linear.x) {
+      // Do not allow the curve to go above y=x, i.e. making pixels brighter
+      // than their original value. This is a "should" in the 2094-50 spec,
+      // but is also enforced by the binary format.
+      if (linear.y > linear.x) {
         linear.y = linear.x;
         linear.m = 1;
       }
@@ -305,6 +306,11 @@ function generateAgtmFromTmo(
   controlPointsX: number[],
   numCurves: number,
 ): AgtmMetadata {
+  if (numCurves > 4) {
+    throw new Error(
+      `Unexpected number of curves: ${numCurves}; AGTM metadata supports at most 4 curves.`,
+    );
+  }
   const agtm: AgtmMetadata = {
     hdr_reference_white: referenceWhite,
     gain_application_space_primaries: PRIMARIES_REC2020,
@@ -840,7 +846,7 @@ function generateHdr10p(
     /*end=*/ contentHeadroomLinear,
   );
 
-  const kNumCurves = 5;
+  const kNumCurves = 4;
   const agtm = generateAgtmFromTmo(
     contentHeadroomLinear,
     referenceWhite,
