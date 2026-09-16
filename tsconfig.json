@@ -19,5 +19,8 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "target": "es2022",
+    "types": [
+      "jasmine"
+    ]
   }
 }

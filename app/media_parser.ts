@@ -332,7 +332,7 @@ interface FrameHeaderOBU {
   error?: string;
 }
 
-interface OBUHeader {
+export interface OBUHeader {
   forbiddenBit: number;
   type: number;
   typeName: string;
@@ -345,7 +345,7 @@ interface OBUHeader {
   internalObuSize?: number;
 }
 
-interface OBU {
+export interface OBU {
   size: number; // Full size including the header and size field.
   header: OBUHeader;
   payload:

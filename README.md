@@ -37,6 +37,12 @@ export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<fill in host name>
 
 See the [user guide here](USAGE.md).
 
+## Run tests
+
+```
+npm test
+```
+
 ## License
 
 HDR Explorer is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "web-test-runner"
   },
   "dependencies": {
     "safevalues": "^1.2.0",
@@ -14,9 +15,14 @@
   },
   "devDependencies": {
     "@types/estree": "^1.0.8",
+    "@types/jasmine": "^6.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/upng-js": "^2.1.5",
+    "@web/dev-server-esbuild": "^2.0.0",
+    "@web/test-runner": "^1.0.0",
+    "jasmine-core": "^7.0.2",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.10",
+    "web-test-runner-jasmine": "^0.1.2"
   }
 }
