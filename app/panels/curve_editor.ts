@@ -237,7 +237,7 @@ export class CurveEditor extends Base2dGraphRenderer {
       linearSdrRelative,
       primaries,
       metadata,
-      metadata.altr[this.altrIndex],
+      metadata.altr[Math.min(this.altrIndex, metadata.altr.length - 1)],
     );
 
     const adaptation = agtmAdapt(metadata, this.headroomLog2);
@@ -852,7 +852,9 @@ export class CurveEditor extends Base2dGraphRenderer {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    if (!this.metadata || !this.curve) return;
+    if (!this.metadata || !this.curve || this.altrIndex >= this.metadata.altr.length) {
+      return;
+    }
     this.metadata.altr[this.altrIndex].curve = this.curve.getControlPoints();
     this.modelChangedCallback(this.metadata);
   }
