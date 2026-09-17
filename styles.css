@@ -111,8 +111,15 @@ legend {
   display: flex;
   flex-flow: row wrap;
   align-items: center;
-  gap: 3px;
+  gap: 4px 10px;
   font-size: 0.9em;
+}
+
+.panel-section {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 3px;
 }
 
 #Panels {

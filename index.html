@@ -50,9 +50,8 @@
               ℹ️
             </button>
           </label>
-          <label for="SignalTransfer">
-            Transfer
-            <span class="tooltip">
+          <label for="SignalTransfer"
+            >Transfer<span class="tooltip">
               <span class="tooltip-trigger">?</span>
               <span class="tooltip-text"
                 >The transfer function of the input content. Automatically detected when possible.
@@ -69,9 +68,8 @@
               <option value="15">Rec.2020 12bit</option>
             </select>
           </label>
-          <label for="SignalPrimaries">
-            Primaries
-            <span class="tooltip">
+          <label for="SignalPrimaries"
+            >Primaries<span class="tooltip">
               <span class="tooltip-trigger">?</span>
               <span class="tooltip-text"
                 >The color primaries of the input content. Automatically detected when
@@ -303,178 +301,190 @@
       <legend>Panels</legend>
       <!-- Panel visibility toggles -->
       <div id="PanelToggles">
-        <select id="PanelDisplayMode">
-          <option value="sbs" selected>Side-by-side (S)</option>
-          <option value="flip">Flip (F)</option>
-        </select>
-        <label for="ToggleNative">
-          Native
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Displays the content as-is, using an &lt;img&gt; tag for images, or &lt;video&gt; for
-              videos. Ignores the headroom slider and transfer/primaries settings.
+        <div class="panel-section">
+          <select id="PanelDisplayMode">
+            <option value="sbs" selected>Side-by-side (S)</option>
+            <option value="flip">Flip (F)</option>
+          </select>
+          <label for="ToggleNative">
+            Native
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Displays the content as-is, using an &lt;img&gt; tag for images, or &lt;video&gt;
+                for videos. Ignores the headroom slider and transfer/primaries settings.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleNative" />
-        </label>
-        <label for="ToggleSdr">
-          2D canvas
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Renders the content in SDR using default 2D canvas rendering. Ignores the headroom
-              slider and transfer/primaries settings.
+            <input type="checkbox" id="ToggleNative" />
+          </label>
+          <label for="ToggleSdr">
+            2D canvas
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Renders the content in SDR using default 2D canvas rendering. Ignores the headroom
+                slider and transfer/primaries settings.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleSdr" />
-        </label>
-        <label for="ToggleAgtm">
-          2094-50
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text"> Renders the content using SMPTE ST 2094-50 metadata. </span>
-          </span>
-          <input type="checkbox" id="ToggleAgtm" />
-        </label>
-        <label for="ToggleAgtmLut">
-          2094-50 (LUT)
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Renders the content using SMPTE ST 2094-50 metadata, using a 1D LUT and/or a 3D LUT,
-              mimicking the Android LUT API. This is used to simulate hardware rendering. In
-              general, LUT rendering is an approximation since interpolation is used.
-              <br />
-              The 1D LUT, if used, is applied first. It contains a gain value, and the gain lookup
-              depends on the 'Sampling' parameter (see its tooltip for details).
-              <br />
-              Then a 3D LUT of size NxNxN, if used, is applied to the output of the 1D LUT, or to
-              the input pixels if the 1D LUT is not used.
+            <input type="checkbox" id="ToggleSdr" />
+          </label>
+          <label for="ToggleAgtm">
+            2094-50
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Renders the content using SMPTE ST 2094-50 metadata.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleAgtmLut" />
-        </label>
-        <label for="ToggleHdr10plus">
-          HDR10+
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Renders the content using HDR10+ dynamic metadata if available, otherwise shows a blue
-              rectangle. Uses the Reference Method from Annex F of ATSC A/341:2024-04.
+            <input type="checkbox" id="ToggleAgtm" />
+          </label>
+          <label for="ToggleAgtmLut">
+            2094-50 (LUT)
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Renders the content using SMPTE ST 2094-50 metadata, using a 1D LUT and/or a 3D LUT,
+                mimicking the Android LUT API. This is used to simulate hardware rendering. In
+                general, LUT rendering is an approximation since interpolation is used.
+                <br />
+                The 1D LUT, if used, is applied first. It contains a gain value, and the gain lookup
+                depends on the 'Sampling' parameter (see its tooltip for details).
+                <br />
+                Then a 3D LUT of size NxNxN, if used, is applied to the output of the 1D LUT, or to
+                the input pixels if the 1D LUT is not used.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleHdr10plus" />
-        </label>
-        <label for="ToggleHdr">
-          HDR
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Renders the content according to its transfer function definition (simple naive
-              rendering). For PQ, highlights get clipped. For HLG, the HLG OOTF function is applied
-              to tone map to the current display 'nits' settings.
+            <input type="checkbox" id="ToggleAgtmLut" />
+          </label>
+          <label for="ToggleHdr10plus">
+            HDR10+
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Renders the content using HDR10+ dynamic metadata if available, otherwise shows a
+                blue rectangle. Uses the Reference Method from Annex F of ATSC A/341:2024-04.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleHdr" />
-        </label>
-        <label for="ToggleLuma">
-          Luma
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">Visualizes the luminance or individual color channels.</span>
-          </span>
-          <input type="checkbox" id="ToggleLuma" />
-        </label>
-        <input
-          type="button"
-          id="FlipButton"
-          value="Flip (F)"
-          title="Flip between the selected panels (press F)"
-          hidden
-        />
-        Curves:
-        <label for="ToggleCurves">
-          2094-50
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Shows the tone mapping curve used by the 2094-50 algorithm.
+            <input type="checkbox" id="ToggleHdr10plus" />
+          </label>
+          <label for="ToggleHdr">
+            HDR
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Renders the content according to its transfer function definition (simple naive
+                rendering). For PQ, highlights get clipped. For HLG, the HLG OOTF function is
+                applied to tone map to the current display 'nits' settings.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleCurves" />
-        </label>
-        <label for="ToggleHdr10pcurves">
-          HDR10+
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Shows the tone mapping curve derived from HDR10+ metadata.
+            <input type="checkbox" id="ToggleHdr" />
+          </label>
+          <label for="ToggleLuma">
+            Luma
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text"
+                >Visualizes the luminance or individual color channels.</span
+              >
             </span>
-          </span>
-          <input type="checkbox" id="ToggleHdr10pcurves" />
-        </label>
-        <label for="ToggleHdrcurves">
-          HDR
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Shows the tone mapping curve used for generic HDR rendering.
+            <input type="checkbox" id="ToggleLuma" />
+          </label>
+          <input
+            type="button"
+            id="FlipButton"
+            value="Flip (F)"
+            title="Flip between the selected panels (press F)"
+            hidden
+          />
+        </div>
+        <div class="panel-section">
+          Curves:
+          <label for="ToggleCurves">
+            2094-50
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Shows the tone mapping curve used by the 2094-50 algorithm.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleHdrcurves" />
-        </label>
-        Metadata:
-        <label for="ToggleStats">
-          Stats
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Displays statistics about the image pixel values distribution.
+            <input type="checkbox" id="ToggleCurves" />
+          </label>
+          <label for="ToggleHdr10pcurves">
+            HDR10+
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Shows the tone mapping curve derived from HDR10+ metadata.
+              </span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleStats" />
-        </label>
+            <input type="checkbox" id="ToggleHdr10pcurves" />
+          </label>
+          <label for="ToggleHdrcurves">
+            HDR
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Shows the tone mapping curve used for generic HDR rendering.
+              </span>
+            </span>
+            <input type="checkbox" id="ToggleHdrcurves" />
+          </label>
+        </div>
+        <div class="panel-section">
+          Metadata:
+          <label for="ToggleStats">
+            Stats
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Displays statistics about the image pixel values distribution.
+              </span>
+            </span>
+            <input type="checkbox" id="ToggleStats" />
+          </label>
 
-        <label for="ToggleJson">
-          2094-50
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">Displays 2094-50 metadata in JSON format.</span>
-          </span>
-          <input type="checkbox" id="ToggleJson" />
-        </label>
-        <label for="ToggleSmpte209440" title="SMPTE 2094-40">
-          HDR10+
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">Displays the raw SMPTE 2094-40 (HDR10+) metadata.</span>
-          </span>
-          <input type="checkbox" id="ToggleSmpte209440" />
-        </label>
-        Other:
-        <label for="ToggleSdrBloat">
-          SDR content
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Adds SDR images around the main content to simulate a mixed SDR/HDR environment.
+          <label for="ToggleJson">
+            2094-50
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">Displays 2094-50 metadata in JSON format.</span>
             </span>
-          </span>
-          <input type="checkbox" id="ToggleSdrBloat" />
-        </label>
-        <label for="ShowClamped">
-          Show clamped
-          <span class="tooltip">
-            <span class="tooltip-trigger">?</span>
-            <span class="tooltip-text">
-              Visualize pixels that got clamped because the tone mapped values fall outside of the
-              content's color space (for the given headroom) in pink, or outside of the display-P3
-              color space in cyan.
+            <input type="checkbox" id="ToggleJson" />
+          </label>
+          <label for="ToggleSmpte209440" title="SMPTE 2094-40">
+            HDR10+
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">Displays the raw SMPTE 2094-40 (HDR10+) metadata.</span>
             </span>
-          </span>
-          <input type="checkbox" id="ShowClamped" />
-        </label>
+            <input type="checkbox" id="ToggleSmpte209440" />
+          </label>
+        </div>
+        <div class="panel-section">
+          Other:
+          <label for="ToggleSdrBloat">
+            SDR content
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Adds SDR images around the main content to simulate a mixed SDR/HDR environment.
+              </span>
+            </span>
+            <input type="checkbox" id="ToggleSdrBloat" />
+          </label>
+          <label for="ShowClamped">
+            Show clamped
+            <span class="tooltip">
+              <span class="tooltip-trigger">?</span>
+              <span class="tooltip-text">
+                Visualize pixels that got clamped because the tone mapped values fall outside of the
+                content's color space (for the given headroom) in pink, or outside of the display-P3
+                color space in cyan.
+              </span>
+            </span>
+            <input type="checkbox" id="ShowClamped" />
+          </label>
+        </div>
       </div>
     </fieldset>
 
