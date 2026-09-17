@@ -37,6 +37,7 @@ import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
 import {CurveEditor} from './panels/curve_editor';
+import {Curves3dRenderer} from './panels/curves_3d_renderer';
 import {Hdr10pRenderer} from './panels/hdr10p_renderer';
 import {HdrRenderer} from './panels/hdr_renderer';
 import {LumaMode, LumaRenderer} from './panels/luma_renderer';
@@ -250,6 +251,44 @@ const miscPanelInfos: Array<PanelInfo<Renderer>> = [
       renderer.setShowGainCurve(showGainCurveEl.checked);
       renderer.setShowControlPoints(showControlPointsEl.checked);
       setRendererHeadroom(renderer);
+      return renderer;
+    },
+  },
+  {
+    name: 'curves_3d',
+    defaultChecked: false,
+    rendererFactory: () => {
+      const container = getHTMLElement('Curves3dPlotContainer');
+      container.textContent = '';
+      const renderer = new Curves3dRenderer(
+        container,
+        getInputElement('Curves3dShowGainCurve'),
+        /* onTimeSelectedCallback= */ (timeSec: number) => {
+          // Seek the video and update the toolbar timestamp slider when clicking on the 3D surface.
+          if (decodedMedia?.type === 'video') {
+            myVideoEl.currentTime = timeSec;
+            timeSliderEl.value = myVideoEl.currentTime.toString();
+            timeSliderValueEl.value = Number(timeSliderEl.value).toLocaleString(
+              'fullwide',
+              {
+                minimumFractionDigits: 3,
+                maximumFractionDigits: 3,
+                minimumIntegerDigits: 3,
+              },
+            );
+          }
+        },
+        /* onShowGainCurveChangedCallback= */ (show: boolean) => {
+          // Sync the "Show gain curve" checkbox between the 3D Curves panel and the 2D Curves panel.
+          if (showGainCurveEl.checked !== show) {
+            showGainCurveEl.checked = show;
+            showGainCurveEl.dispatchEvent(new Event('change'));
+          }
+        },
+      );
+      renderer.setShowGainCurve(showGainCurveEl.checked);
+      setRendererHeadroom(renderer);
+      updateCurves3dRenderer(renderer);
       return renderer;
     },
   },
@@ -1103,6 +1142,79 @@ function onMetadataChanged() {
   getRenderer('agtm', AgtmRenderer)?.setMetadata(agtmMetadata);
   getRenderer('agtm_lut', AgtmRenderer)?.setMetadata(agtmMetadata);
   getRenderer('luma', LumaRenderer)?.setMetadata(agtmMetadata);
+  updateCurves3dRenderer();
+}
+
+function ensureDynamicAgtmForCurves3d() {
+  const curves3dPanel = allPanels.find((p) => p.hashName === 'curves_3d');
+  if (!curves3dPanel?.toggle.checked) return;
+  if (
+    decodedMedia?.type === 'video' &&
+    agtmMetadataType !== 'fromfile' &&
+    agtmMetadataType !== 'custom' &&
+    dynamicAgtmEl.value !== 'all'
+  ) {
+    dynamicAgtmEl.value = 'all';
+    dynamicAgtmEl.dispatchEvent(new Event('change'));
+  }
+}
+
+function updateCurves3dRenderer(renderer?: Curves3dRenderer) {
+  const r = renderer ?? getRenderer('curves_3d', Curves3dRenderer);
+  if (!r) return;
+
+  ensureDynamicAgtmForCurves3d();
+
+  let frameTimes: number[] = [0];
+  let videoDuration = 0;
+  if (decodedMedia?.type === 'video') {
+    videoDuration = myVideoEl.duration || 0;
+    if (decodedMedia.parsedMedia) {
+      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
+      if (videoTrack && videoTrack.samplesSortedByPresentationTime.length > 0) {
+        frameTimes = videoTrack.samplesSortedByPresentationTime.map(
+          (s) => s.presentationTimeSec,
+        );
+      }
+    }
+  }
+
+  let rawMetadataList: Array<AgtmMetadata | null> | null = null;
+  if (agtmMetadataType === 'fromfile') {
+    rawMetadataList = getEmbeddedAgtmMetadataList();
+  } else if (agtmMetadataType === 'custom') {
+    rawMetadataList = customAgtmMetadataArray;
+  } else {
+    rawMetadataList = dynamicAgtmMetadata;
+  }
+
+  let metadataList: AgtmMetadata[];
+  if (rawMetadataList && rawMetadataList.length > 0) {
+    const firstValid =
+      rawMetadataList.find((m): m is AgtmMetadata => m !== null) ??
+      agtmMetadata;
+    let lastValid = firstValid;
+    metadataList = rawMetadataList.map((m) => {
+      const base = m ?? lastValid;
+      lastValid = base;
+      if (!baselineHeadroomLinearOverridden && !curvePointsOverridden) {
+        return base;
+      }
+      return {
+        ...base,
+        baseline_hdr_headroom: baselineHeadroomLinearOverridden
+          ? agtmMetadata.baseline_hdr_headroom
+          : base.baseline_hdr_headroom,
+        altr: curvePointsOverridden ? agtmMetadata.altr : base.altr,
+      };
+    });
+  } else {
+    metadataList = [agtmMetadata];
+  }
+
+  const currentTime =
+    decodedMedia?.type === 'video' ? myVideoEl.currentTime : 0;
+  r.setCurvesData(frameTimes, metadataList, currentTime, videoDuration);
 }
 
 function updateSaveAgtmButtons() {
@@ -1136,8 +1248,19 @@ function updateSaveAgtmButtons() {
       : 'No per-frame metadata available';
 }
 
+// Cache the dense embedded AGTM metadata array per media file to avoid
+// repeated binary searches across video frames.
+let cachedEmbeddedAgtmMedia: unknown = null;
+let cachedEmbeddedAgtmList: Array<AgtmMetadata | null> | null = null;
+
 function getEmbeddedAgtmMetadataList(): Array<AgtmMetadata | null> | null {
   if (!decodedMedia?.parsedMedia) return null;
+  if (
+    cachedEmbeddedAgtmMedia === decodedMedia.parsedMedia &&
+    cachedEmbeddedAgtmList
+  ) {
+    return cachedEmbeddedAgtmList;
+  }
   const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
   if (!videoTrack) return null;
   const trackMetadata =
@@ -1169,6 +1292,8 @@ function getEmbeddedAgtmMetadataList(): Array<AgtmMetadata | null> | null {
     metadataList[frameIdx] = currentMetadata;
     frameIdx++;
   }
+  cachedEmbeddedAgtmMedia = decodedMedia.parsedMedia;
+  cachedEmbeddedAgtmList = metadataList;
   return metadataList;
 }
 
@@ -3166,6 +3291,9 @@ populateContentDropdown();
       renderVisiblePanels();
     } else if (dynamicAgtmEl.value === 'seek') {
       await recomputeAgtmForCurrentFrame();
+    } else {
+      updateCurves3dRenderer();
+      getRenderer('curves_3d', Curves3dRenderer)?.draw();
     }
   });
 
@@ -3439,6 +3567,9 @@ populateContentDropdown();
         updateStats();
       }
       update();
+      if (panel.hashName === 'curves_3d' && panel.toggle.checked) {
+        updateCurves3dRenderer();
+      }
       if (panel.hashName === 'stats' && panel.toggle.checked) {
         renderVisiblePanels();
       } else {
@@ -3478,6 +3609,9 @@ populateContentDropdown();
     const curveEditor = getRenderer('curves', CurveEditor);
     curveEditor?.setShowGainCurve(checked);
     curveEditor?.draw();
+    const curves3d = getRenderer('curves_3d', Curves3dRenderer);
+    curves3d?.setShowGainCurve(checked);
+    curves3d?.draw();
     setHash('gain', checked ? '1' : '0');
   });
 

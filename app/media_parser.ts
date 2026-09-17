@@ -1844,18 +1844,21 @@ export function findTrackSampleIndexForTime(
  * Returns the index of the sample at the given time, in presentation order.
  * The samples must be sorted by presentation time.
  */
-function findSampleIndexForTime(
-  samples: Array<{presentationTimeSec: number}>,
+export function findSampleIndexForTime(
+  samples: ReadonlyArray<{presentationTimeSec: number} | number>,
   time: number,
+  epsilon = 1e-6,
 ): number | null {
-  const epsilon = 1e-6;
   let low = 0;
   let high = samples.length - 1;
 
-  // Binary search to find the largest index i such that samples[i].presentationTimeSec <= time + epsilon
+  // Binary search to find the largest index i such that presentationTimeSec <= time + epsilon
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    if (samples[mid].presentationTimeSec <= time + epsilon) {
+    const sample = samples[mid];
+    const sampleTime =
+      typeof sample === 'number' ? sample : sample.presentationTimeSec;
+    if (sampleTime <= time + epsilon) {
       low = mid + 1;
     } else {
       high = mid - 1;

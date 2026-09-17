@@ -10,6 +10,7 @@
     "test": "web-test-runner"
   },
   "dependencies": {
+    "plotly.js-dist-min": "^3.0.1",
     "safevalues": "^1.2.0",
     "upng-js": "^2.1.0"
   },
@@ -17,6 +18,7 @@
     "@types/estree": "^1.0.8",
     "@types/jasmine": "^6.0.0",
     "@types/json-schema": "^7.0.15",
+    "@types/plotly.js": "^2.35.3",
     "@types/upng-js": "^2.1.5",
     "@web/dev-server-esbuild": "^2.0.0",
     "@web/test-runner": "^1.0.0",

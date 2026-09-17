@@ -15,6 +15,7 @@
  */
 
 import {
+  findSampleIndexForTime,
   findTrackSampleIndexForTime,
   getAverageFramerate,
   getCicp,
@@ -74,6 +75,10 @@ describe('media_parser', () => {
       expect(findTrackSampleIndexForTime(videoTrack!, 0.0)).toBe(0);
       expect(findTrackSampleIndexForTime(videoTrack!, 0.1)).toBe(2);
       expect(findTrackSampleIndexForTime(videoTrack!, 1.0)).toBe(29);
+
+      const times = [0.0, 0.0333, 0.0667, 0.1];
+      expect(findSampleIndexForTime(times, 0.033, 1e-3)).toBe(1);
+      expect(findSampleIndexForTime(times, 0.033, 1e-6)).toBe(0);
     });
 
     it('parses HDR10+ metadata in MP4 (indoor_av1_hdr10p.mp4)', async () => {

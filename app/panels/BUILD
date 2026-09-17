@@ -12,6 +12,7 @@ ts_library(
         "base_renderer.ts",
         "canvas_sdr_renderer.ts",
         "curve_editor.ts",
+        "curves_3d_renderer.ts",
         "hdr10p_renderer.ts",
         "hdr_renderer.ts",
         "luma_renderer.ts",
@@ -21,5 +22,7 @@ ts_library(
     deps = [
         "//third_party/hdrscope/app:hdr_lib",
         "//third_party/hdrscope/app/color_helpers",
+        "//third_party/javascript/plotly:plotly_minified_raw",
+        "//third_party/javascript/typings/plotly_js",
     ],
 )
