@@ -18,11 +18,11 @@
  * @fileoverview Utility for extracting AGTM metadata from ICC profiles.
  */
 
-import {AgtmMetadata} from './color_helpers/agtm';
+import * as upng from 'upng-js';
+import {ImageTabs} from 'upng-js';
 import {parseAgtm} from './agtm_parser';
 import {Bitstream} from './bitstream';
-import {ImageTabs} from 'upng-js';
-import * as upng from 'upng-js';
+import {AgtmMetadata} from './color_helpers/agtm';
 
 // The UPNG type definitions currently don't have the iCCP tag yet.
 declare interface ExtendedImageTabs extends ImageTabs {
@@ -108,7 +108,11 @@ function findAdgcTagRaw(data: Uint8Array): Uint8Array | null {
   return null;
 }
 
-function matchString(data: Uint8Array, offset: number, expected: string): boolean {
+function matchString(
+  data: Uint8Array,
+  offset: number,
+  expected: string,
+): boolean {
   if (offset + expected.length > data.length) return false;
   for (let i = 0; i < expected.length; i++) {
     if (data[offset + i] !== expected.charCodeAt(i)) return false;

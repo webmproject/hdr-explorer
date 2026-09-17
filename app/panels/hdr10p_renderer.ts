@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  kColorFunctionGlsl,
-} from '../color_helpers/color_functions';
+import {kColorFunctionGlsl} from '../color_helpers/color_functions';
 import {Hdr10pMetadata} from '../color_helpers/hdr10p';
 import {exp2} from '../color_helpers/math_helpers';
 import {BaseWebgl2Renderer} from './base_renderer';

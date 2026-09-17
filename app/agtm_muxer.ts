@@ -17,10 +17,10 @@
 import {ByteWriter} from './bitstream';
 import {AgtmMetadata} from './color_helpers/agtm';
 import {
-  getChromaticities,
   PRIMARIES_P3,
   PRIMARIES_REC2020,
   PRIMARIES_SRGB,
+  getChromaticities,
 } from './color_helpers/color_functions';
 import {clamp} from './color_helpers/math_helpers';
 import {
@@ -339,9 +339,9 @@ export function makeAgtmPayload(m: AgtmMetadata): Uint8Array {
   return new Uint8Array(buffer).subarray(0, offset);
 }
 
-const T35_COUNTRY_CODE = 0xb5;  // United States
-const T35_PROVIDER_CODE = 0x0090;  // SMPTE
-const T35_PROVIDER_ORIENTED_CODE = 0x0001;  // SMPTE ST 2094-50 (AGTM)
+const T35_COUNTRY_CODE = 0xb5; // United States
+const T35_PROVIDER_CODE = 0x0090; // SMPTE
+const T35_PROVIDER_ORIENTED_CODE = 0x0001; // SMPTE ST 2094-50 (AGTM)
 
 function makeT35Identifier(): Uint8Array {
   // The T35 payload has a size of 5 bytes:
@@ -449,8 +449,11 @@ function muxAgtmMetadataWebm(
 
     for (const child of cluster.children) {
       let meta = offsetToMetadata.get(child.offset);
-      if (elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement) &&
-        child.trackNum === BigInt(videoTrack.id) && meta) {
+      if (
+        elementIsOfType(child, ID_SIMPLE_BLOCK, EbmlBlockElement) &&
+        child.trackNum === BigInt(videoTrack.id) &&
+        meta
+      ) {
         // Turn the SimpleBlock into a BlockGroup with the AGTM in BlockAdditions.
         const blockGroup = new EbmlMasterElement(ID_BLOCK_GROUP);
         const block = new EbmlBlockElement(ID_BLOCK, child.size);
@@ -484,7 +487,7 @@ function muxAgtmMetadataWebm(
                   elementIsOfType(more, ID_BLOCK_MORE, EbmlMasterElement) &&
                   isAgtmBlockMore(more)
                 ) {
-                  continue;  // Remove/replace existing AGTM metadata.
+                  continue; // Remove/replace existing AGTM metadata.
                 }
                 newMoreList.push(more);
               }

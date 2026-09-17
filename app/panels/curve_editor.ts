@@ -36,9 +36,9 @@ import {
   logGainToLinearGrad,
 } from '../color_helpers/gain_curve';
 import {
-  Mat2,
   clamp,
   exp2,
+  Mat2,
   mat2Mm,
   mat2Mvm,
   newtonSolve,
@@ -409,10 +409,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     );
 
     this.context.save();
-    this.context.translate(
-      30,
-      this.graphAreaTopY + this.graphAreaHeight / 2,
-    );
+    this.context.translate(30, this.graphAreaTopY + this.graphAreaHeight / 2);
     this.context.rotate(-Math.PI / 2);
     this.context.textAlign = 'center';
     this.context.fillText(
@@ -762,8 +759,10 @@ export class CurveEditor extends Base2dGraphRenderer {
     const metadata = this.metadata;
     if (!this.selectedPixelRgbLinear || !metadata) return;
 
-    const multiplier =
-        getMaxSdrRelative(this.contentTransfer, metadata.hdr_reference_white);
+    const multiplier = getMaxSdrRelative(
+      this.contentTransfer,
+      metadata.hdr_reference_white,
+    );
     const xValues = getComponentMixValue(
       this.selectedPixelRgbLinear.map((x) => x * multiplier),
       this.contentPrimaries,
@@ -817,8 +816,7 @@ export class CurveEditor extends Base2dGraphRenderer {
         this.graphBottomLeft.y = this.graphAreaTopY;
       } else if (minY < -0.1) {
         // Curve crosses y=0. Center the origin.
-        this.graphBottomLeft.y =
-          this.graphAreaTopY + this.graphAreaHeight / 2;
+        this.graphBottomLeft.y = this.graphAreaTopY + this.graphAreaHeight / 2;
       } else {
         // All points are above y=0. Origin at bottom.
         this.graphBottomLeft.y = this.graphAreaBottomY;
@@ -852,7 +850,11 @@ export class CurveEditor extends Base2dGraphRenderer {
   //////////////////////////////////////////////////////////////////////////////
   // Event handling
   onModelChanged() {
-    if (!this.metadata || !this.curve || this.altrIndex >= this.metadata.altr.length) {
+    if (
+      !this.metadata ||
+      !this.curve ||
+      this.altrIndex >= this.metadata.altr.length
+    ) {
       return;
     }
     this.metadata.altr[this.altrIndex].curve = this.curve.getControlPoints();

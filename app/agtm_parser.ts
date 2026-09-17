@@ -208,8 +208,8 @@ export function parseAgtm(stream: Bitstream): AgtmMetadata | null {
           break;
       }
       // Normalize the weights to sum to 1.
-      const weightSum = mix.rgb[0] + mix.rgb[1] + mix.rgb[2] + mix.max +
-          mix.min + mix.channel;
+      const weightSum =
+        mix.rgb[0] + mix.rgb[1] + mix.rgb[2] + mix.max + mix.min + mix.channel;
       if (weightSum > 0) {
         for (let c = 0; c < 3; ++c) {
           mix.rgb[c] /= weightSum;

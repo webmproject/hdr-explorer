@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 /**
  * Helper for reading from a Uint8Array.
  */
@@ -82,8 +81,10 @@ export class Bitstream {
     const totalBits = this.bytePos * 8 + this.bitPos + n;
     this.bytePos = Math.floor(totalBits / 8);
     this.bitPos = totalBits % 8;
-    if (this.bytePos > this.data.length ||
-        (this.bytePos === this.data.length && this.bitPos > 0)) {
+    if (
+      this.bytePos > this.data.length ||
+      (this.bytePos === this.data.length && this.bitPos > 0)
+    ) {
       this.bytePos = this.data.length;
       this.bitPos = 0;
     }
@@ -111,7 +112,7 @@ export class Bitstream {
    * Reads a single byte, optimized for byte-aligned streams.
    * @returns The byte read, or null if the end of the stream is reached.
    */
-  readUByte(): number|null {
+  readUByte(): number | null {
     if (this.bitPos === 0) {
       if (this.bytePos >= this.data.length) return null;
       return this.data[this.bytePos++];
@@ -368,9 +369,9 @@ export class DataStream {
   readLanguage(): string {
     const langCode = this.readUint16();
     return String.fromCharCode(
-        ((langCode >> 10) & 0x1f) + 0x60,
-        ((langCode >> 5) & 0x1f) + 0x60,
-        (langCode & 0x1f) + 0x60,
+      ((langCode >> 10) & 0x1f) + 0x60,
+      ((langCode >> 5) & 0x1f) + 0x60,
+      (langCode & 0x1f) + 0x60,
     );
   }
   writeLanguage(language: string): void {
@@ -379,8 +380,8 @@ export class DataStream {
       return;
     }
     const chars = language.split('').map((c) => c.charCodeAt(0) - 0x60);
-    const langCode = ((chars[0] & 0x1f) << 10) | ((chars[1] & 0x1f) << 5) |
-        (chars[2] & 0x1f);
+    const langCode =
+      ((chars[0] & 0x1f) << 10) | ((chars[1] & 0x1f) << 5) | (chars[2] & 0x1f);
     this.writeUint16(langCode);
   }
 
@@ -398,11 +399,11 @@ export class DataStream {
   subStream(length?: number): DataStream {
     const actualLength = length ?? this.remaining;
     const sub = new DataStream(
-        new DataView(
-            this.view.buffer,
-            this.view.byteOffset + this.offset,
-            actualLength,
-            ),
+      new DataView(
+        this.view.buffer,
+        this.view.byteOffset + this.offset,
+        actualLength,
+      ),
     );
     this.offset += actualLength;
     return sub;
@@ -410,15 +411,18 @@ export class DataStream {
 
   readUint8Array(length: number): Uint8Array {
     const arr = new Uint8Array(
-        this.view.buffer, this.view.byteOffset + this.offset, length);
+      this.view.buffer,
+      this.view.byteOffset + this.offset,
+      length,
+    );
     this.offset += length;
     return arr;
   }
   writeUint8Array(arr: Uint8Array): void {
     const dest = new Uint8Array(
-        this.view.buffer,
-        this.view.byteOffset + this.offset,
-        arr.length,
+      this.view.buffer,
+      this.view.byteOffset + this.offset,
+      arr.length,
     );
     dest.set(arr);
     this.offset += arr.length;

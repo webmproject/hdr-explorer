@@ -18,7 +18,7 @@ import {AgtmMetadata} from './color_helpers/agtm';
 import {
   CHROMATICITIES_REC2020,
   getChromaticities,
-  PRIMARIES_REC2020
+  PRIMARIES_REC2020,
 } from './color_helpers/color_functions';
 
 /**
@@ -73,9 +73,11 @@ function mapToStandardFormat(metadata: AgtmMetadata): StandardAgtmFormat {
     hdrReferenceWhite: metadata.hdr_reference_white,
   };
 
-  const chromaticities = metadata.gain_application_space_chromaticities ??
-      getChromaticities(metadata.gain_application_space_primaries ??
-                        PRIMARIES_REC2020);
+  const chromaticities =
+    metadata.gain_application_space_chromaticities ??
+    getChromaticities(
+      metadata.gain_application_space_primaries ?? PRIMARIES_REC2020,
+    );
   standard.headroomAdaptiveToneMap = {
     baselineHdrHeadroom: metadata.baseline_hdr_headroom,
     gainApplicationChromaticities: chromaticities,
