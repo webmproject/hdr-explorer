@@ -22,7 +22,7 @@
     "@web/test-runner": "^1.0.0",
     "jasmine-core": "^7.0.2",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10",
+    "vite": "^8.0.16",
     "web-test-runner-jasmine": "^0.1.2"
   }
 }
