@@ -261,15 +261,137 @@ class Rwtmo {
   }
 }
 
+/**
+ * Returns the x in [lo, hi] where the log2 gain crosses zero.
+ * The caller must ensure that exactly one of the two ends has a positive log2
+ * gain. The returned point has a log2 gain <= 0.
+ */
+function bisectGainCrossing(
+  logGain: (x: number) => number,
+  lo: number,
+  hi: number,
+): number {
+  if (logGain(lo) <= 0 === logGain(hi) <= 0) {
+    throw new Error('logGain(lo) and logGain(hi) must have different signs.');
+  }
+  // In the binary format, the x-coordinates are encoded with a precision of
+  // 1/1000 so it's not useful to bisect with higher precision.
+  const kThreshold = 0.5 / 1000;
+  while (hi - lo > kThreshold) {
+    const mid = 0.5 * (lo + hi);
+    // If the log2 gain of the midpoint has the same sign as the log2 gain of the
+    // lower bound, then the crossing must be in the upper half. Otherwise, it
+    // must be in the lower half.
+    if (logGain(mid) > 0 === logGain(lo) > 0) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  // Always return the endpoint with a log2 gain <= 0.
+  return logGain(lo) > 0 ? hi : lo;
+}
+
+/**
+ * Removes the control points where the log2 gain is positive (i.e. the
+ * tone mapping curve is above the y=x line).
+ * For gain curves that tone map to a lower headroom, which is what this
+ * file deals with, the 2094-50 binary format enforces that the log2 gain of
+ * all control points is <= 0, therefore a positive log2 gain is invalid.
+ *
+ * The invalid control points are replaced with the two points that delimit the
+ * region where the log2 gain is positive, i.e. the points where the gain curve
+ * crosses the y=0 line (i.e. the tone mapping curve crosses the y=x line).
+ * The curve interpolated between these two points does go above the line,
+ * but that is allowed by the spec, although it's not recommended
+ * (see section 6.2.3 of SMPTE ST 2094-50). However in this case it produces a
+ * curve that is a little bit closer to the original tone mapping curve
+ * (this is relevant mostly for HDR10+ conversion). It's also possible to tweak
+ * the slope of these two control points to make the curve go even higher above
+ * the line (within reason, e.g. care must be taken not to cause non
+ * monotonicity), but this is not done here.
+ *
+ * An alternative trivial solution would be to clip the control points to y=0,
+ * but that can end up causing the interpolated curve to be non-monotonic in
+ * some cases, e.g. between control points { "x": 3, "y": 0, "m": 0 }
+ * (on the y=0 line) and { "x": 5, "y": -0.6, "m": -0.2 }. On the tone mapped
+ * curve, this corresponds to points (3, 3) and (5, 5*2^-0.6~= 3.3) which are
+ * correctly monotonic (3.3 > 3), but the interpolation between the two is not.
+ */
+function replaceInvalidControlPoints(
+  xValues: number[],
+  logGain: (x: number) => number,
+): number[] {
+  const res: number[] = [];
+  let previousBoosts = false;
+  for (let i = 0; i < xValues.length; ++i) {
+    const boosts = logGain(xValues[i]) > 0;
+    if (i > 0 && boosts !== previousBoosts) {
+      res.push(bisectGainCrossing(logGain, xValues[i - 1], xValues[i]));
+    }
+    // Always keep the first control point even if its log2 gain is positive,
+    // to allow interpolating smoothly between this point and the other endpoint
+    // of the first boosted region.
+    if (i === 0 || !boosts) {
+      res.push(xValues[i]);
+    }
+    previousBoosts = boosts;
+  }
+  // The operator is not expected to boost its whole range, but keep the curve
+  // usable rather than empty if it ever does.
+  return res.length >= 2 ? res : xValues;
+}
+
 function toGainCurve(xValues: number[], tmo: ToneMappingOperator): Point2[] {
   const epsilon = 1e-5;
+
+  const tmoSlope = (x: number) =>
+    (tmo.evaluate(x + epsilon) - tmo.evaluate(x)) / epsilon;
+
+  const logGain = (x: number) =>
+    x > 0
+      ? Math.log2(tmo.evaluate(x) / x)
+      : // By L'Hôpital's rule, lim_{x->0} f(x)/x = f'(0).
+        Math.log2(Math.max(tmoSlope(0), 1e-10));
+
   const res: Point2[] = [];
-  for (let i = 0; i < xValues.length; ++i) {
-    const x = xValues[i];
-    const y = Math.log2(tmo.evaluate(x) / x);
-    const y2 = Math.log2(tmo.evaluate(x + epsilon) / (x + epsilon));
-    const m = (y2 - y) / epsilon;
-    res.push({x, y, m});
+  for (const x of replaceInvalidControlPoints(xValues, logGain)) {
+    const y = logGain(x);
+    let m = 0;
+
+    if (x === 0) {
+      // At x = 0, g'(x) = d/dx [log2(f(x) / x)] encounters a 0/0 singularity:
+      //   g(x) = ln2(f(x) / x) = (ln(f(x)) - ln(x)) / ln(2)
+      //   g'(x) = (x * f'(x) - f(x)) / (x * f(x) * ln(2))
+      // As x -> 0, numerator and denominator both approach 0 (since f(0) = 0).
+      // Applying L'Hôpital's rule once:
+      //   d/dx [x * f'(x) - f(x)] = x * f''(x)
+      //   d/dx [x * f(x) * ln(2)] = ln(2) * (f(x) + x * f'(x))
+      // This is still 0 / 0 as x -> 0 because f(0) = 0.
+      // Applying L'Hôpital's rule a second time:
+      //   d/dx [x * f''(x)] = f''(x) + x * f'''(x) -> f''(0)
+      //   d/dx [ln(2) * (f(x) + x * f'(x))] = ln(2) * (2 * f'(x) + x * f''(x)) -> 2 * ln(2) * f'(0)
+      // Therefore, lim_{x->0} g'(x) = f''(0) / (2 * ln(2) * f'(0)).
+      const m0 = tmoSlope(0);
+      if (m0 > 0) {
+        const tmSecondDeriv = (tmoSlope(epsilon) - m0) / epsilon;
+        m = tmSecondDeriv / (2.0 * Math.LN2 * m0);
+      }
+    } else {
+      // Central difference for x > 0 avoids catastrophic cancellation
+      // and singularity issues.
+      const xPrev = Math.max(0, x - epsilon);
+      const xNext = x + epsilon;
+      m = (logGain(xNext) - logGain(xPrev)) / (xNext - xPrev);
+    }
+
+    // When tone mapping down, the gain must be <= 0. This is actually just a
+    // "should" in the spec, but is enforced in the binary format.
+    // replaceInvalidControlPoints() should have already removed points where
+    // the gain is positive, except for the very first one to allow smooth
+    // interpolation.
+    const finalY = Math.min(y, 0);
+    res.push({x, y: finalY, m});
   }
   return res;
 }
@@ -321,7 +443,7 @@ function generateAgtmFromTmo(
   for (let i = 0; i < numCurves; ++i) {
     // Space out curves evenly in log space.
     const targetHeadroomLog2 =
-      i * Math.log2(contentHeadroomLinear) / numCurves;
+      (i * Math.log2(contentHeadroomLinear)) / numCurves;
     const targetHeadroomLinear = exp2(targetHeadroomLog2);
     const tmo = tmoFactory(targetHeadroomLinear);
     agtm.altr.push({
@@ -797,11 +919,7 @@ export class Hdr10pToneMapper implements ToneMappingOperator {
     const xNorm = Math.min(1.0, xNits / this.norm);
 
     const yNorm = applyKneePointBezier(this.kvec, this.p.length, this.p, xNorm);
-    const yLinearRaw = yNorm * this.targetHeadroomLinear;
-
-    // Not in the HDR10+ spec, but the AGTM binary format does not allow
-    // boosting values (because the sign of the gain is fixed).
-    return Math.min(yLinearRaw, x);
+    return yNorm * this.targetHeadroomLinear;
   }
 }
 
@@ -842,7 +960,7 @@ function generateHdr10p(
   const controlPointsX = generateControlPointsX(
     kNumControlPoints,
     /*power=*/ 2.0,
-    /*start=*/ 0.01,
+    /*start=*/ 0.0,
     /*end=*/ contentHeadroomLinear,
   );
 
