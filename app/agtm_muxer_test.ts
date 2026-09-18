@@ -14,9 +14,15 @@
  * limitations under the License.
  */
 
-import {muxAgtmMetadata} from './agtm_muxer';
+import {arePayloadsEqual, makeAgtmPayload, muxAgtmMetadata} from './agtm_muxer';
 import {AgtmMetadata} from './color_helpers/agtm';
-import {ParsedMedia, parseMp4, parseWebm} from './media_parser';
+import {
+  ParsedMedia,
+  getAgtmMetadata,
+  getFirstVideoTrack,
+  parseMp4,
+  parseWebm,
+} from './media_parser';
 
 const sampleAgtm: AgtmMetadata = {
   hdr_reference_white: 203,
@@ -113,6 +119,108 @@ describe('agtm_muxer', () => {
       expect(frame.agtm).toBeDefined();
       expect(frame.agtm!.hdr_reference_white).toBe(referenceWhites[i]);
     }
+  });
+
+  it('correctly compares payloads with arePayloadsEqual', () => {
+    const payloadA = makeAgtmPayload(sampleAgtm);
+    const payloadA2 = makeAgtmPayload({...sampleAgtm});
+    const payloadB = makeAgtmPayload({
+      ...sampleAgtm,
+      hdr_reference_white: 500,
+    });
+    expect(arePayloadsEqual(payloadA, payloadA2)).toBeTrue();
+    expect(arePayloadsEqual(payloadA, payloadB)).toBeFalse();
+    expect(arePayloadsEqual(payloadA, new Uint8Array(0))).toBeFalse();
+  });
+
+  it('deduplicates identical consecutive metadata in MP4', async () => {
+    const response = await fetch('/data/lego_hlg.mp4');
+    expect(response.ok).toBeTrue();
+    const arrayBuffer = await response.arrayBuffer();
+
+    const referenceWhites = [100, 100, 100, 203, 203, 300];
+    const metadataList: AgtmMetadata[] = referenceWhites.map((white) => ({
+      ...sampleAgtm,
+      hdr_reference_white: white,
+    }));
+
+    const muxedBuffer = muxAgtmMetadata(arrayBuffer, metadataList);
+    expect(muxedBuffer).not.toBeNull();
+
+    const parsed = parseMp4(muxedBuffer!);
+    expect(parsed).not.toBeNull();
+    const track1Metadata = parsed!.hdrMetadata[1];
+    expect(track1Metadata).toBeDefined();
+
+    const agtm = track1Metadata['AGTM'];
+    expect(agtm).toBeDefined();
+    // Consecutive identical metadata should be deduplicated (100, 203, 300 -> 3 frames).
+    expect(agtm.frames.length).toBe(3);
+    expect(agtm.frames[0].agtm!.hdr_reference_white).toBe(100);
+    expect(agtm.frames[1].agtm!.hdr_reference_white).toBe(203);
+    expect(agtm.frames[2].agtm!.hdr_reference_white).toBe(300);
+
+    // Verify that querying metadata at each video frame time correctly resolves
+    // to the expected metadata, including for the deduplicated frames.
+    const videoTrack = getFirstVideoTrack(parsed!.tracks)!;
+    expect(videoTrack).toBeDefined();
+    for (let i = 0; i < metadataList.length; ++i) {
+      const videoSample = videoTrack.samplesSortedByPresentationTime[i];
+      const retrieved = getAgtmMetadata(
+        parsed!,
+        videoSample.presentationTimeSec,
+      );
+      expect(typeof retrieved !== 'string').toBeTrue();
+      expect((retrieved as AgtmMetadata).hdr_reference_white).toBe(
+        referenceWhites[i],
+      );
+    }
+  });
+
+  it('deduplicates all identical metadata into a single sample in MP4', async () => {
+    const response = await fetch('/data/lego_hlg.mp4');
+    expect(response.ok).toBeTrue();
+    const arrayBuffer = await response.arrayBuffer();
+
+    const metadataList: AgtmMetadata[] = Array.from({length: 10}, () => ({
+      ...sampleAgtm,
+    }));
+    metadataList[5] = {
+      ...sampleAgtm,
+      hdr_reference_white: 500,
+    };
+
+    const muxedBuffer = muxAgtmMetadata(arrayBuffer, metadataList);
+    expect(muxedBuffer).not.toBeNull();
+
+    const parsed = parseMp4(muxedBuffer!);
+    expect(parsed).not.toBeNull();
+    const track1Metadata = parsed!.hdrMetadata[1];
+    expect(track1Metadata).toBeDefined();
+
+    const videoTrack = getFirstVideoTrack(parsed!.tracks)!;
+    expect(videoTrack).toBeDefined();
+    const videoSamples = videoTrack.samplesSortedByPresentationTime;
+
+    const agtm = track1Metadata['AGTM'];
+    expect(agtm).toBeDefined();
+    expect(agtm.frames.length).toBe(3);
+    expect(agtm.frames[0].agtm!.hdr_reference_white).toBe(
+      sampleAgtm.hdr_reference_white,
+    );
+    expect(agtm.frames[0].presentationTimeSec).toBe(
+      videoSamples[0].presentationTimeSec,
+    );
+    expect(agtm.frames[1].agtm!.hdr_reference_white).toBe(500);
+    expect(agtm.frames[1].presentationTimeSec).toBe(
+      videoSamples[5].presentationTimeSec,
+    );
+    expect(agtm.frames[2].agtm!.hdr_reference_white).toBe(
+      sampleAgtm.hdr_reference_white,
+    );
+    expect(agtm.frames[2].presentationTimeSec).toBe(
+      videoSamples[6].presentationTimeSec,
+    );
   });
 
   it('muxes multiple metadata with varying hdr_reference_white into WebM', async () => {

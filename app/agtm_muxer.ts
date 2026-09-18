@@ -150,6 +150,18 @@ function haveCommonCurveParams(altr: AgtmMetadata['altr']): boolean {
     );
 }
 
+export function arePayloadsEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; ++i) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function makeAgtmPayload(m: AgtmMetadata): Uint8Array {
   // Calculate the maximum possible size for the AGTM payload to pre-allocate
   // a buffer. This assumes worst-case scenarios for all conditional fields.
@@ -633,6 +645,7 @@ function muxAgtmMetadataMp4(
   for (let i = paddedMetadataList.length; i < numVideoSamples; ++i) {
     paddedMetadataList[i] = null;
   }
+  let nextPayload: Uint8Array | null = null;
   for (let i = 0; i < paddedMetadataList.length; ++i) {
     const metadata = paddedMetadataList[i];
     if (metadata === null) {
@@ -644,18 +657,32 @@ function muxAgtmMetadataMp4(
     const sampleStartCts = videoTrack.samplesSortedByPresentationTime[i].cts;
     const samplePresentationTimeSec =
       videoTrack.samplesSortedByPresentationTime[i].presentationTimeSec;
-    while (
-      i + 1 < paddedMetadataList.length &&
-      paddedMetadataList[i + 1] === null
-    ) {
-      i++;
-      sampleIdxToMetadataIdx[i] = metadataIdx;
+
+    // Merge this metadata sample with the next ones which are either null or
+    // identical.
+    const payload = nextPayload ?? makeAgtmPayload(metadata);
+    nextPayload = null;
+    while (i + 1 < paddedMetadataList.length) {
+      const nextMetadata = paddedMetadataList[i + 1];
+      if (nextMetadata === null || nextMetadata === metadata) {
+        i++;
+        sampleIdxToMetadataIdx[i] = metadataIdx;
+      } else {
+        const candidatePayload = makeAgtmPayload(nextMetadata);
+        // Deduplicate consecutive identical payloads.
+        if (arePayloadsEqual(payload, candidatePayload)) {
+          i++;
+          sampleIdxToMetadataIdx[i] = metadataIdx;
+        } else {
+          nextPayload = candidatePayload;
+          break;
+        }
+      }
     }
     const sampleEnd =
       videoTrack.samplesSortedByPresentationTime[i].cts +
       videoTrack.samplesSortedByPresentationTime[i].duration;
     const sampleDuration = sampleEnd - sampleStartCts;
-    const payload = makeAgtmPayload(metadata);
     const sampleSize = payload.length;
     stszBox.sampleCount++;
     stszBox.sampleSizes.push(sampleSize);
