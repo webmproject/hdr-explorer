@@ -3269,15 +3269,20 @@ populateContentDropdown();
       const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
       if (videoTrack && videoTrack.samplesSortedByPresentationTime.length > 0) {
         const samples = videoTrack.samplesSortedByPresentationTime;
+        // Add a small epsilon to the current time to avoid getting stuck on the
+        // same frame because of rounding in HTMLMediaElement.currentTime.
+        const epsilon = 0.0001;
+        const currentTime = myVideoEl.currentTime + epsilon;
         const currentIndex =
-          findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
+          findTrackSampleIndexForTime(videoTrack, currentTime) ?? 0;
         let targetIndex = currentIndex + delta;
         if (myVideoEl.loop) {
           targetIndex = (targetIndex + samples.length) % samples.length;
         } else {
           targetIndex = Math.max(0, Math.min(samples.length - 1, targetIndex));
         }
-        myVideoEl.currentTime = samples[targetIndex].presentationTimeSec;
+        const newTime = samples[targetIndex].presentationTimeSec + epsilon;
+        myVideoEl.currentTime = newTime;
         return;
       }
     }
