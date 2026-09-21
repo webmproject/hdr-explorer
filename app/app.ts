@@ -399,7 +399,9 @@ const sdrBloatImgEls = Array.from(
 const sdrBloatParentEls = Array.from(
   document.getElementsByClassName('sdr-bloat-parent'),
 ) as HTMLElement[];
+const prevFrameEl = getButtonElement('PrevFrame');
 const playPauseEl = getButtonElement('PlayPause');
+const nextFrameEl = getButtonElement('NextFrame');
 const loopButtonEl = getButtonElement('LoopButton');
 const muteButtonEl = getButtonElement('MuteButton');
 const nativeHeadroomSliderEl = getHTMLElement('NativeHeadroomArrow');
@@ -3257,6 +3259,47 @@ populateContentDropdown();
     update();
     renderVisiblePanels();
     scrollSyncer.syncVisiblePanels();
+  });
+
+  const stepFrame = (delta: number) => {
+    if (!myVideoEl.paused) {
+      myVideoEl.pause();
+    }
+    if (decodedMedia?.parsedMedia) {
+      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
+      if (videoTrack && videoTrack.samplesSortedByPresentationTime.length > 0) {
+        const samples = videoTrack.samplesSortedByPresentationTime;
+        const currentIndex =
+          findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
+        let targetIndex = currentIndex + delta;
+        if (myVideoEl.loop) {
+          targetIndex = (targetIndex + samples.length) % samples.length;
+        } else {
+          targetIndex = Math.max(0, Math.min(samples.length - 1, targetIndex));
+        }
+        myVideoEl.currentTime = samples[targetIndex].presentationTimeSec;
+        return;
+      }
+    }
+    const framerate =
+      (decodedMedia?.parsedMedia &&
+        getAverageFramerate(decodedMedia.parsedMedia)) ||
+      30;
+    const duration = myVideoEl.duration || 0;
+    const newTime = myVideoEl.currentTime + delta / framerate;
+    if (myVideoEl.loop && duration > 0) {
+      myVideoEl.currentTime = (newTime + duration) % duration;
+    } else {
+      myVideoEl.currentTime = Math.max(0, Math.min(duration, newTime));
+    }
+  };
+
+  prevFrameEl.addEventListener('click', () => {
+    stepFrame(-1);
+  });
+
+  nextFrameEl.addEventListener('click', () => {
+    stepFrame(1);
   });
 
   playPauseEl.addEventListener('click', (e) => {
