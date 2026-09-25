@@ -510,10 +510,7 @@ export class ImageStats {
     return linear;
   }
 
-  getPixelValueEncoded(
-    x: number,
-    y: number,
-  ): [number, number, number] | null {
+  getPixelValueEncoded(x: number, y: number): [number, number, number] | null {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
       return null;
     }

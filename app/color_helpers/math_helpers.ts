@@ -150,9 +150,15 @@ export function mat3Mm(a: Mat3, b: Mat3): Mat3 {
 /** Returns the 3x3 identity matrix. */
 export function mat3Id(): Mat3 {
   return {
-    xx: 1, xy: 0, xz: 0,
-    yx: 0, yy: 1, yz: 0,
-    zx: 0, zy: 0, zz: 1,
+    xx: 1,
+    xy: 0,
+    xz: 0,
+    yx: 0,
+    yy: 1,
+    yz: 0,
+    zx: 0,
+    zy: 0,
+    zz: 1,
   };
 }
 

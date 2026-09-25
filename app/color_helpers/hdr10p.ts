@@ -96,8 +96,7 @@ export function guidedBezierCurveVector(
   } else {
     const normMinusT = norm - t;
     const u =
-      1.0 -
-      (normMinusT > 0 ? Math.max(0.0, (d - t) / normMinusT) : 0.0);
+      1.0 - (normMinusT > 0 ? Math.max(0.0, (d - t) / normMinusT) : 0.0);
     for (let i = 0; i < pLen; ++i) {
       const pLVecI = i / (pLen - 1);
       pVec[i] = u * p[i] + (1.0 - u) * pLVecI;
@@ -151,4 +150,3 @@ export function applyKneePointBezier(
     return kvec.y + y * (1.0 - kvec.y);
   }
 }
-

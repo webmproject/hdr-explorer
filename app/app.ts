@@ -16,23 +16,55 @@
 
 import {objectUrlFromSafeSource} from 'safevalues/dom';
 
-import {getAgtm, getStatsForAgtm, needsStats,} from './agtm_generator';
-import {AgtmMetadataType, kAgtmMetadataTypeNames, kDefaultAgtmMetadataType,} from './agtm_metadata_types';
+import {getAgtm, getStatsForAgtm, needsStats} from './agtm_generator';
+import {
+  AgtmMetadataType,
+  kAgtmMetadataTypeNames,
+  kDefaultAgtmMetadataType,
+} from './agtm_metadata_types';
 import {makeAgtmPayload, muxAgtmMetadata} from './agtm_muxer';
 import {kDefaultMetadata} from './builtin_agtm';
 import {DEFAULT_FILE, TEST_FILES} from './test_files';
 
 import {AgtmMetadata, ComponentMix} from './color_helpers/agtm';
-import {LutInputColorSpaceMode, LutOptions, LutType, SamplingType,} from './color_helpers/agtm_adapt';
-import {getChromaticities, getPrimariesEnum, PRIMARIES_REC2020, PRIMARIES_SRGB, TRANSFER_PQ, TRANSFER_SRGB, TRANSFER_HLG} from './color_helpers/color_functions';
+import {
+  LutInputColorSpaceMode,
+  LutOptions,
+  LutType,
+  SamplingType,
+} from './color_helpers/agtm_adapt';
+import {
+  getChromaticities,
+  getPrimariesEnum,
+  PRIMARIES_REC2020,
+  PRIMARIES_SRGB,
+  TRANSFER_HLG,
+  TRANSFER_PQ,
+  TRANSFER_SRGB,
+} from './color_helpers/color_functions';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {exp2} from './color_helpers/math_helpers';
-import {basenameWithoutExtension, download, downloadApng, downloadBlob,} from './download';
+import {
+  basenameWithoutExtension,
+  download,
+  downloadApng,
+  downloadBlob,
+} from './download';
 import {ScreenDetailed} from './global_interfaces';
 import {averageStats, ComputedStats, ImageStats} from './image_stats';
 import {jsonToMetadata, metadataListToJson, metadataToJson} from './json';
-import {createImageBitmapSource, DecodedMedia, decodeMediaWithCallback, getMediaInfoString} from './load_media';
-import {findTrackSampleIndexForTime, getAverageFramerate, getFirstVideoTrack, getSmpte209440Metadata} from './media_parser';
+import {
+  createImageBitmapSource,
+  DecodedMedia,
+  decodeMediaWithCallback,
+  getMediaInfoString,
+} from './load_media';
+import {
+  findTrackSampleIndexForTime,
+  getAverageFramerate,
+  getFirstVideoTrack,
+  getSmpte209440Metadata,
+} from './media_parser';
 import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
@@ -224,8 +256,8 @@ const fullSizeCanvasStyles: Partial<CSSStyleDeclaration> = {
   maxHeight: '100%',
 };
 const reducedSizeCanvasStyles: Partial<CSSStyleDeclaration> = {
-  maxWidth: '90%',  // Leave some space for scrolling
-  maxHeight: '60vh',  // Make sure the canvas is fully visible
+  maxWidth: '90%', // Leave some space for scrolling
+  maxHeight: '60vh', // Make sure the canvas is fully visible
 };
 
 const miscPanelInfos: Array<PanelInfo<Renderer>> = [
@@ -452,7 +484,9 @@ const simWarnings = Array.from(
   document.getElementsByClassName('warning-sim'),
 ) as HTMLElement[];
 
-const permissionDialogEl = document.getElementById('PermissionDialog') as HTMLDialogElement;
+const permissionDialogEl = document.getElementById(
+  'PermissionDialog',
+) as HTMLDialogElement;
 const permissionButtonEl = getButtonElement('PermissionButton');
 const permissionStep2El = getHTMLElement('PermissionStep2');
 const closePermissionDialogEl = getButtonElement('ClosePermissionDialog');
@@ -463,7 +497,9 @@ const contentBrowserEl = getHTMLElement('ContentBrowser');
 const closeContentBrowserEl = getButtonElement('CloseContentBrowser');
 const contentGridEl = getHTMLElement('ContentGrid');
 const jsonUploadEl = getInputElement('JsonUpload');
-const mediaInfoDialogEl = document.getElementById('MediaInfoDialog') as HTMLDialogElement;
+const mediaInfoDialogEl = document.getElementById(
+  'MediaInfoDialog',
+) as HTMLDialogElement;
 const closeMediaInfoDialogEl = getButtonElement('CloseMediaInfoDialog');
 const errorToastEl = getHTMLElement('ErrorToast');
 const errorToastMessageEl = getHTMLElement('ErrorToastMessage');
@@ -681,7 +717,6 @@ function updateSelectedPixel() {
     if (panel.panelEl.hidden || !panel.renderer) {
       continue;
     }
-    if (panel.renderer instanceof CurveEditor) {
       panel.renderer.setSelectedPixel(rgbNits, rgbEncoded);
     } else if (panel.renderer instanceof StatsViewer) {
       panel.renderer.setSelectedPixel(coords, rgbNits);
@@ -720,12 +755,13 @@ function isStatsRequiringPanelOpen(): boolean {
   const panelsThatNeedStats = ['stats'];
   return allPanels.some(
     (panel) =>
-      panel.toggle.checked &&
-      panelsThatNeedStats.includes(panel.hashName),
+      panel.toggle.checked && panelsThatNeedStats.includes(panel.hashName),
   );
 }
 
-function needsFrameStats(type: AgtmMetadataType | 'fromfile' | 'custom'): boolean {
+function needsFrameStats(
+  type: AgtmMetadataType | 'fromfile' | 'custom',
+): boolean {
   if (isStatsRequiringPanelOpen()) {
     return true;
   }
@@ -1057,7 +1093,7 @@ function getComponentMix(type: string): ComponentMix | null {
       max: 0.5,
       min: 0,
       channel: 0,
-      rgb: [1/6, 1/6, 1/6],
+      rgb: [1 / 6, 1 / 6, 1 / 6],
     };
   }
   return null;
@@ -1085,7 +1121,6 @@ function applyGainApplicationSpacePrimaries(metadata: AgtmMetadata) {
       getChromaticities(PRIMARIES_REC2020);
   }
 }
-
 
 function applyOverrides(metadata: AgtmMetadata, originalMix: ComponentMix) {
   if (gainApplicationSpacePrimariesOverridden) {
@@ -1116,9 +1151,9 @@ function getPrimariesEnumOrMinusOne(metadata: AgtmMetadata) {
   if (metadata.gain_application_space_primaries != null) {
     return metadata.gain_application_space_primaries;
   } else if (metadata.gain_application_space_chromaticities != null) {
-    return getPrimariesEnum(
-      metadata.gain_application_space_chromaticities,
-    ) ?? -1;
+    return (
+      getPrimariesEnum(metadata.gain_application_space_chromaticities) ?? -1
+    );
   }
   return -1;
 }
@@ -1575,9 +1610,11 @@ async function decodedMediaCallback(
   // If the currently selected option is hidden for this file, pick the
   // first visible one.
   if (
-    (metadataSelectEl.options[metadataSelectEl.selectedIndex] as
-      | HTMLOptionElement
-      | undefined)?.hidden
+    (
+      metadataSelectEl.options[metadataSelectEl.selectedIndex] as
+        | HTMLOptionElement
+        | undefined
+    )?.hidden
   ) {
     for (const option of metadataSelectEl.options) {
       if (!option.hidden) {
@@ -1865,7 +1902,6 @@ async function updateStateFromHash() {
     }
   }
 
-
   const metadataId = getHash('m');
   if (metadataId) {
     metadataSelectEl.value = metadataId;
@@ -2086,7 +2122,6 @@ export function showErrorToast(
     }, durationMs);
   }
 }
-
 
 class PanelScrollSyncer {
   private scrollTop = 0;
@@ -2380,7 +2415,10 @@ async function generateDynamicMetadata(
           tempVideo.currentTime = time;
         });
 
-        const computed = await computeFrameStats(tempVideo, /*fullRange=*/ true);
+        const computed = await computeFrameStats(
+          tempVideo,
+          /*fullRange=*/ true,
+        );
         if (!computed) {
           return [];
         }
@@ -2989,35 +3027,35 @@ export function main() {
 
   // Create the content browser thumbnails from the select element's options.
   showMediaInfoButtonEl.addEventListener('click', () => {
-  mediaInfoDialogEl.showModal();
-});
-closeMediaInfoDialogEl.addEventListener('click', () => {
-  mediaInfoDialogEl.close();
-});
-closeErrorToastEl.addEventListener('click', () => {
-  if (errorToastTimeoutId !== null) {
-    clearTimeout(errorToastTimeoutId);
-    errorToastTimeoutId = null;
-  }
-  errorToastEl.hidden = true;
-});
-
-const dialogsToCloseOnClickOutside = [mediaInfoDialogEl, permissionDialogEl];
-for (const dialog of dialogsToCloseOnClickOutside) {
-  dialog.addEventListener('click', (event) => {
-    const rect = dialog.getBoundingClientRect();
-    const isInDialog =
-      rect.top <= event.clientY &&
-      event.clientY <= rect.top + rect.height &&
-      rect.left <= event.clientX &&
-      event.clientX <= rect.left + rect.width;
-    if (!isInDialog) {
-      dialog.close();
-    }
+    mediaInfoDialogEl.showModal();
   });
-}
+  closeMediaInfoDialogEl.addEventListener('click', () => {
+    mediaInfoDialogEl.close();
+  });
+  closeErrorToastEl.addEventListener('click', () => {
+    if (errorToastTimeoutId !== null) {
+      clearTimeout(errorToastTimeoutId);
+      errorToastTimeoutId = null;
+    }
+    errorToastEl.hidden = true;
+  });
 
-populateContentDropdown();
+  const dialogsToCloseOnClickOutside = [mediaInfoDialogEl, permissionDialogEl];
+  for (const dialog of dialogsToCloseOnClickOutside) {
+    dialog.addEventListener('click', (event) => {
+      const rect = dialog.getBoundingClientRect();
+      const isInDialog =
+        rect.top <= event.clientY &&
+        event.clientY <= rect.top + rect.height &&
+        rect.left <= event.clientX &&
+        event.clientX <= rect.left + rect.width;
+      if (!isInDialog) {
+        dialog.close();
+      }
+    });
+  }
+
+  populateContentDropdown();
   populateContentBrowser();
 
   document.querySelectorAll('.tooltip').forEach((tooltip) => {
@@ -3136,7 +3174,6 @@ populateContentDropdown();
       'pri': null,
     });
   });
-
 
   let previousMetadataType: string | null = null;
   metadataSelectEl.addEventListener('focus', () => {
@@ -3478,8 +3515,6 @@ populateContentDropdown();
     },
   );
 
-
-
   resetAllButtonEl.addEventListener('click', async () => {
     resetMetadataOverrides();
     await setAgtmMetadata();
@@ -3558,8 +3593,6 @@ populateContentDropdown();
       });
     }
   });
-
-
 
   lumaModeSelectEl.addEventListener('change', (e) => {
     const mode = lumaModeSelectEl.value as LumaMode;
@@ -3644,7 +3677,7 @@ populateContentDropdown();
       if (
         renderer instanceof AgtmRenderer ||
         renderer instanceof Hdr10pRenderer ||
-        renderer instanceof HdrRenderer
+        renderer instanceof HdrRenderer ||
       ) {
         renderer.setShowClamped(checked);
       }
@@ -3772,7 +3805,8 @@ populateContentDropdown();
       });
     };
     const tryScreenDetails = async () => {
-      if (getHash('noperm') === '1') { // Useful for tests.
+      if (getHash('noperm') === '1') {
+        // Useful for tests.
         return;
       }
       try {

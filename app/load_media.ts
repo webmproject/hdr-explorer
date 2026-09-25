@@ -19,7 +19,15 @@ import {objectUrlFromSafeSource} from 'safevalues/dom';
 import {AgtmMetadata} from './color_helpers/agtm';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {getAgtmFromIcc, getIccFromPng} from './icc';
-import {getAgtmMetadata, getCicp, getSmpte209440Metadata, ParsedMedia, parseMp4, parseWebm, getFirstVideoTrack} from './media_parser';
+import {
+  getAgtmMetadata,
+  getCicp,
+  getFirstVideoTrack,
+  getSmpte209440Metadata,
+  ParsedMedia,
+  parseMp4,
+  parseWebm,
+} from './media_parser';
 
 interface MediaMetadata {
   transferCharacteristics: number;
@@ -133,7 +141,10 @@ function loadImage(
   });
 }
 
-function readMetadata(parsedMedia: ParsedMedia, videoTime: number): MediaMetadata {
+function readMetadata(
+  parsedMedia: ParsedMedia,
+  videoTime: number,
+): MediaMetadata {
   const metadata: MediaMetadata = {
     transferCharacteristics: 0,
     colourPrimaries: 0,
@@ -207,9 +218,9 @@ export async function decodeMediaWithCallback(
 
   const isMatroska = extension === 'webm' || extension === 'mkv';
   const parsedMedia = fileArrayBuffer
-    ? (isMatroska ?
-      parseWebm(fileArrayBuffer) :
-      parseMp4(fileArrayBuffer))
+    ? isMatroska
+      ? parseWebm(fileArrayBuffer)
+      : parseMp4(fileArrayBuffer)
     : null;
   if (parsedMedia) {
     console.debug('Parsed Video:', parsedMedia);
@@ -218,11 +229,6 @@ export async function decodeMediaWithCallback(
   if (isImage) {
     const myImageEl = await loadImage(url, imageEl);
     let metadata = parsedMedia ? readMetadata(parsedMedia, 0) : null;
-    if (
-      extension === 'jpg' ||
-      extension === 'jpeg' ||
-      extension === 'png'
-    ) {
       fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
       // Assume sRGB for JPEG and PNG.
       // But ideally we should check if there is an ICC profile or a cICP chunk
@@ -350,13 +356,15 @@ export function getMediaInfoString(media: DecodedMedia): string {
   if (Object.keys(parsed.tracks).length > 0) {
     info += '\nTracks:\n';
     for (const trackId in parsed.tracks) {
-      if (!Object.prototype.hasOwnProperty.call(parsed.tracks, trackId)) continue;
+      if (!Object.prototype.hasOwnProperty.call(parsed.tracks, trackId))
+        continue;
       const track = parsed.tracks[trackId];
       info += `  - ID: ${track.id}, Type: ${track.handlerType}, Codec: ${track.codec}, Samples: ${track.samples.length}\n`;
       const trackReferences = track.trackReferences;
       if (trackReferences && Object.keys(trackReferences).length > 0) {
         for (const refType in trackReferences) {
-          if (!Object.prototype.hasOwnProperty.call(trackReferences, refType)) continue;
+          if (!Object.prototype.hasOwnProperty.call(trackReferences, refType))
+            continue;
           const refTrackIds = trackReferences[refType];
           info += `    - Track Reference: type '${refType}', ID: ${refTrackIds.join(', ')}\n`;
         }

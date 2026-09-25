@@ -18,14 +18,14 @@ import {AgtmMetadata, Altr} from './agtm';
 import {
   applyHlgOotf,
   getLumaCoeffs,
+  getMaxSdrRelative,
   PRIMARIES_P3,
   PRIMARIES_REC2020,
+  primariesConvert,
   TRANSFER_HLG,
   TRANSFER_PQ,
-  primariesConvert,
   transferFromLinear,
   transferToLinear,
-  getMaxSdrRelative
 } from './color_functions';
 import {clamp, exp2, Mat3, mat3Inv, mat3Mvm} from './math_helpers';
 import {PiecewiseCubic} from './piecewise_cubic';
@@ -650,8 +650,10 @@ export function generate3dLut(
   contentTransfer: number,
   contentPrimaries: number | number[],
 ): Float32Array {
-  const lutInputMax =
-    getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white);
+  const lutInputMax = getMaxSdrRelative(
+    contentTransfer,
+    metadata.hdr_reference_white,
+  );
   const adaptation = agtmAdapt(metadata, headroomLog2);
 
   const N = options.lut3dSize;
@@ -718,7 +720,8 @@ export function generate3dLut(
 
         const rgbSdrRelative = rgbUnitized.map(
           (c) =>
-            c * getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white),
+            c *
+            getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white),
         );
 
         const tonemapped = agtmToneMap(
@@ -779,8 +782,10 @@ export function agtmToneMapWithLut(
   lut3d: Float32Array | null,
   lut1d: Float32Array | null,
 ): number[] {
-  const lutInputMax =
-    getMaxSdrRelative(contentTransfer, metadata.hdr_reference_white);
+  const lutInputMax = getMaxSdrRelative(
+    contentTransfer,
+    metadata.hdr_reference_white,
+  );
   const lutOutputMax = exp2(headroomLog2);
 
   const inputPrimaries = getLutInputPrimaries(

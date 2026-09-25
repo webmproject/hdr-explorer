@@ -16,11 +16,10 @@
 
 import {Bitstream, ByteWriter, DataStream} from './bitstream';
 
-
 function readBoxHeader(
-    stream: DataStream,
-    isTopLevelBox: boolean,
-    ): {size: number; type: string; headerSize: number}|null {
+  stream: DataStream,
+  isTopLevelBox: boolean,
+): {size: number; type: string; headerSize: number} | null {
   if (stream.remaining < 8) return null;
   let size = stream.readUint32();
   const type = stream.readString(4);
@@ -44,15 +43,15 @@ function readBoxHeader(
 
 export abstract class Box {
   constructor(
-      public type: string,  // 4cc
-      public size = 0,
+    public type: string, // 4cc
+    public size = 0,
   ) {}
 
   updateSize(): void {
     const contentSize = this.getContentSize();
     let headerSize = 8;
     if (headerSize + contentSize > 0xffffffff) {
-      headerSize += 8;  // largesize
+      headerSize += 8; // largesize
     }
     this.size = headerSize + contentSize;
   }
@@ -77,14 +76,14 @@ export abstract class Box {
 }
 
 interface BoxConstructor {
-  new(type: string, size: number): Box;
+  new (type: string, size: number): Box;
 }
 
 export function findBox<T extends Box>(
-    boxes: Box[],
-    type: string,
-    expectedType: new (...args: never[]) => T,
-    ): T|null {
+  boxes: Box[],
+  type: string,
+  expectedType: new (...args: never[]) => T,
+): T | null {
   const child = boxes.find((c) => c.type === type);
   if (child instanceof expectedType) {
     return child;
@@ -93,17 +92,19 @@ export function findBox<T extends Box>(
 }
 
 function findBoxRecursive<T extends Box>(
-    boxes: Box[],
-    type: string,
-    expectedType: new (...args: never[]) => T,
-    ): T|null {
+  boxes: Box[],
+  type: string,
+  expectedType: new (...args: never[]) => T,
+): T | null {
   for (const child of boxes) {
     if (child.type === type) {
       if (child instanceof expectedType) {
         return child;
       }
     } else if (
-        child instanceof ContainerBox || child instanceof ContainerFullBox) {
+      child instanceof ContainerBox ||
+      child instanceof ContainerFullBox
+    ) {
       const descendant = findBoxRecursive(child.children, type, expectedType);
       if (descendant) {
         return descendant;
@@ -141,7 +142,7 @@ export class FullBox extends Box {
     stream.writeUint32((this.version << 24) | (this.flags & 0x00ffffff));
   }
   override getContentSize(): number {
-    return 4;  // for version and flags
+    return 4; // for version and flags
   }
 }
 
@@ -149,16 +150,16 @@ export class ContainerBox extends Box {
   children: Box[] = [];
 
   getChild<T extends Box>(
-      type: string,
-      expectedType: new(...args: never[]) => T,
-      ): T|null {
+    type: string,
+    expectedType: new (...args: never[]) => T,
+  ): T | null {
     return findBox(this.children, type, expectedType);
   }
 
   getDescendant<T extends Box>(
-      type: string,
-      expectedType: new(...args: never[]) => T,
-      ): T|null {
+    type: string,
+    expectedType: new (...args: never[]) => T,
+  ): T | null {
     return findBoxRecursive(this.children, type, expectedType);
   }
 
@@ -199,16 +200,16 @@ export class ContainerFullBox extends FullBox {
   children: Box[] = [];
 
   getChild<T extends Box>(
-      type: string,
-      expectedType: new(...args: never[]) => T,
-      ): T|null {
+    type: string,
+    expectedType: new (...args: never[]) => T,
+  ): T | null {
     return findBox(this.children, type, expectedType);
   }
 
   getDescendant<T extends Box>(
-      type: string,
-      expectedType: new(...args: never[]) => T,
-      ): T|null {
+    type: string,
+    expectedType: new (...args: never[]) => T,
+  ): T | null {
     return findBoxRecursive(this.children, type, expectedType);
   }
 
@@ -238,7 +239,7 @@ export class ContainerFullBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // for version and flags
+    let size = 4; // for version and flags
     size += this.getContentSizeBeforeChildren();
     for (const child of this.children) {
       child.updateSize();
@@ -263,7 +264,7 @@ export interface EditListEntry {
   // fractional part)
   mediaRateInteger: number;
   mediaRateFraction: number;
-  mediaRate: number;  // Computed from mediaRateInteger and mediaRateFraction.
+  mediaRate: number; // Computed from mediaRateInteger and mediaRateFraction.
 }
 
 export class ElstBox extends FullBox {
@@ -273,10 +274,12 @@ export class ElstBox extends FullBox {
     super.parseContent(stream);
     const entryCount = stream.readUint32();
     for (let i = 0; i < entryCount; i++) {
-      const editDuration = this.version === 1 ? Number(stream.readBigUint64()) :
-                                                stream.readUint32();
-      const mediaTime = this.version === 1 ? Number(stream.readBigInt64()) :
-                                             stream.readInt32();
+      const editDuration =
+        this.version === 1
+          ? Number(stream.readBigUint64())
+          : stream.readUint32();
+      const mediaTime =
+        this.version === 1 ? Number(stream.readBigInt64()) : stream.readInt32();
       const mediaRateInteger = stream.readInt16();
       const mediaRateFraction = stream.readInt16();
       this.entries.push({
@@ -307,7 +310,7 @@ export class ElstBox extends FullBox {
 
   override getContentSize(): number {
     let size = super.getContentSize();
-    size += 4;  // entry_count
+    size += 4; // entry_count
     const entrySize = this.version === 1 ? 20 : 12;
     size += this.entries.length * entrySize;
     return size;
@@ -328,7 +331,7 @@ export class ColrBox extends Box {
   transferFunction = 0;
   matrixCoefficients = 0;
   fullRangeFlag = 0;
-  iccProfile: Uint8Array|null = null;
+  iccProfile: Uint8Array | null = null;
 
   override parseContent(stream: DataStream) {
     this.colourType = stream.readString(4);
@@ -356,10 +359,10 @@ export class ColrBox extends Box {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // colourType
+    let size = 4; // colourType
     if (this.colourType === 'nclx') {
-      size += 2 + 2 + 2 + 1;  // colorPrimaries, transferFunction,
-                              // matrixCoefficients, fullRangeFlag
+      size += 2 + 2 + 2 + 1; // colorPrimaries, transferFunction,
+      // matrixCoefficients, fullRangeFlag
     } else if (this.colourType === 'rICC' || this.colourType === 'iCCP') {
       size += this.iccProfile ? this.iccProfile.byteLength : 0;
     }
@@ -388,10 +391,7 @@ export class FtypBox extends Box {
     }
   }
   override getContentSize(): number {
-    return 4 + 4 +
-        4 *
-        this.compatibleBrands
-            .length;  // majorBrand, minorVersion, compatibleBrands
+    return 4 + 4 + 4 * this.compatibleBrands.length; // majorBrand, minorVersion, compatibleBrands
   }
 }
 
@@ -411,13 +411,14 @@ export class MvhdBox extends FullBox {
     this.creationTime = stream.readDate(is64bit);
     this.modificationTime = stream.readDate(is64bit);
     this.timescale = stream.readUint32();
-    this.duration =
-        is64bit ? Number(stream.readBigUint64()) : stream.readUint32();
+    this.duration = is64bit
+      ? Number(stream.readBigUint64())
+      : stream.readUint32();
     this.rate = stream.readFixedPoint(16, 16);
     this.volume = stream.readFixedPoint(8, 8);
-    stream.skip(10);  // reserved
+    stream.skip(10); // reserved
     this.matrix = stream.readMatrix();
-    stream.skip(24);  // pre_defined
+    stream.skip(24); // pre_defined
     this.nextTrackId = stream.readUint32();
   }
   override writeContent(stream: DataStream): void {
@@ -433,25 +434,23 @@ export class MvhdBox extends FullBox {
     }
     stream.writeFixedPoint(16, 16, this.rate);
     stream.writeFixedPoint(8, 8, this.volume);
-    for (let i = 0; i < 10; i++) stream.writeUint8(0);  // reserved
+    for (let i = 0; i < 10; i++) stream.writeUint8(0); // reserved
     stream.writeMatrix(this.matrix);
-    for (let i = 0; i < 6; i++) stream.writeUint32(0);  // pre_defined
+    for (let i = 0; i < 6; i++) stream.writeUint32(0); // pre_defined
     stream.writeUint32(this.nextTrackId);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
     if (this.version === 1) {
-      size +=
-          8 + 8 + 4 + 8;  // creationTime, modificationTime, timescale, duration
+      size += 8 + 8 + 4 + 8; // creationTime, modificationTime, timescale, duration
     } else {
-      size +=
-          4 + 4 + 4 + 4;  // creationTime, modificationTime, timescale, duration
+      size += 4 + 4 + 4 + 4; // creationTime, modificationTime, timescale, duration
     }
-    size += 4 + 2;      // rate, volume
-    size += 2 + 4 * 2;  // reserved
-    size += 36;         // matrix
-    size += 24;         // pre_defined
-    size += 4;          // nextTrackId
+    size += 4 + 2; // rate, volume
+    size += 2 + 4 * 2; // reserved
+    size += 36; // matrix
+    size += 24; // pre_defined
+    size += 4; // nextTrackId
     return size;
   }
 }
@@ -474,14 +473,15 @@ export class TkhdBox extends FullBox {
     this.creationTime = stream.readDate(is64bit);
     this.modificationTime = stream.readDate(is64bit);
     this.trackId = stream.readUint32();
-    stream.skip(4);  // reserved
-    this.duration =
-        is64bit ? Number(stream.readBigUint64()) : stream.readUint32();
-    stream.skip(8);  // reserved
+    stream.skip(4); // reserved
+    this.duration = is64bit
+      ? Number(stream.readBigUint64())
+      : stream.readUint32();
+    stream.skip(8); // reserved
     this.layer = stream.readInt16();
     this.alternateGroup = stream.readInt16();
     this.volume = stream.readFixedPoint(8, 8);
-    stream.skip(2);  // reserved
+    stream.skip(2); // reserved
     this.matrix = stream.readMatrix();
     this.width = stream.readFixedPoint(16, 16);
     this.height = stream.readFixedPoint(16, 16);
@@ -492,35 +492,33 @@ export class TkhdBox extends FullBox {
     stream.writeDate(this.creationTime, is64bit);
     stream.writeDate(this.modificationTime, is64bit);
     stream.writeUint32(this.trackId);
-    stream.writeUint32(0);  // reserved
+    stream.writeUint32(0); // reserved
     if (is64bit) {
       stream.writeBigUint64(BigInt(this.duration));
     } else {
       stream.writeUint32(this.duration);
     }
-    stream.writeUint32(0);  // reserved
-    stream.writeUint32(0);  // reserved
+    stream.writeUint32(0); // reserved
+    stream.writeUint32(0); // reserved
     stream.writeInt16(this.layer);
     stream.writeInt16(this.alternateGroup);
     stream.writeFixedPoint(8, 8, this.volume);
-    stream.writeUint16(0);  // reserved
+    stream.writeUint16(0); // reserved
     stream.writeMatrix(this.matrix);
     stream.writeFixedPoint(16, 16, this.width);
     stream.writeFixedPoint(16, 16, this.height);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
     if (this.version === 1) {
-      size += 8 + 8 + 4 + 4 +
-          8;  // creationTime, modificationTime, trackId, reserved, duration
+      size += 8 + 8 + 4 + 4 + 8; // creationTime, modificationTime, trackId, reserved, duration
     } else {
-      size += 4 + 4 + 4 + 4 +
-          4;  // creationTime, modificationTime, trackId, reserved, duration
+      size += 4 + 4 + 4 + 4 + 4; // creationTime, modificationTime, trackId, reserved, duration
     }
-    size += 8;              // reserved
-    size += 2 + 2 + 2 + 2;  // layer, alternateGroup, volume, reserved
-    size += 36;             // matrix
-    size += 4 + 4;          // width, height
+    size += 8; // reserved
+    size += 2 + 2 + 2 + 2; // layer, alternateGroup, volume, reserved
+    size += 36; // matrix
+    size += 4 + 4; // width, height
     return size;
   }
 }
@@ -530,17 +528,18 @@ export class MdhdBox extends FullBox {
   modificationTime = '';
   timescale = 0;
   duration = 0;
-  language = 'und';  // Undefined language
+  language = 'und'; // Undefined language
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
     const is64bit = this.version === 1;
     this.creationTime = stream.readDate(is64bit);
     this.modificationTime = stream.readDate(is64bit);
     this.timescale = stream.readUint32();
-    this.duration =
-        is64bit ? Number(stream.readBigUint64()) : stream.readUint32();
+    this.duration = is64bit
+      ? Number(stream.readBigUint64())
+      : stream.readUint32();
     this.language = stream.readLanguage();
-    stream.skip(2);  // pre_defined
+    stream.skip(2); // pre_defined
   }
   override writeContent(stream: DataStream): void {
     super.writeContent(stream);
@@ -554,19 +553,17 @@ export class MdhdBox extends FullBox {
       stream.writeUint32(this.duration);
     }
     stream.writeLanguage(this.language);
-    stream.writeUint16(0);  // pre_defined
+    stream.writeUint16(0); // pre_defined
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
     if (this.version === 1) {
-      size +=
-          8 + 8 + 4 + 8;  // creationTime, modificationTime, timescale, duration
+      size += 8 + 8 + 4 + 8; // creationTime, modificationTime, timescale, duration
     } else {
-      size +=
-          4 + 4 + 4 + 4;  // creationTime, modificationTime, timescale, duration
+      size += 4 + 4 + 4 + 4; // creationTime, modificationTime, timescale, duration
     }
-    size += 2;  // language
-    size += 2;  // pre_defined, reserved
+    size += 2; // language
+    size += 2; // pre_defined, reserved
     return size;
   }
 }
@@ -576,24 +573,24 @@ export class HdlrBox extends FullBox {
   name = '';
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
-    stream.skip(4);  // pre_defined
+    stream.skip(4); // pre_defined
     this.handlerType = stream.readString(4);
-    stream.skip(12);  // reserved
+    stream.skip(12); // reserved
     this.name = stream.readNullTerminatedString();
   }
   override writeContent(stream: DataStream): void {
     super.writeContent(stream);
-    stream.writeUint32(0);  // pre_defined
+    stream.writeUint32(0); // pre_defined
     stream.writeString(this.handlerType);
-    for (let i = 0; i < 12; i++) stream.writeUint8(0);  // reserved
+    for (let i = 0; i < 12; i++) stream.writeUint8(0); // reserved
     stream.writeNullTerminatedString(this.name);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // pre_defined
-    size += 4;     // handlerType
-    size += 12;    // reserved
-    size += this.name.length + 1;  // name (null-terminated)
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // pre_defined
+    size += 4; // handlerType
+    size += 12; // reserved
+    size += this.name.length + 1; // name (null-terminated)
     return size;
   }
 }
@@ -618,8 +615,8 @@ export class VmhdBox extends FullBox {
     stream.writeUint16(this.opcolorB);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 2 + 2 + 2 + 2;  // graphicsmode, opcolorR, opcolorG, opcolorB
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 2 + 2 + 2 + 2; // graphicsmode, opcolorR, opcolorG, opcolorB
     return size;
   }
 }
@@ -629,16 +626,16 @@ export class SmhdBox extends FullBox {
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
     this.balance = stream.readFixedPoint(8, 8);
-    stream.skip(2);  // reserved
+    stream.skip(2); // reserved
   }
   override writeContent(stream: DataStream): void {
     super.writeContent(stream);
     stream.writeFixedPoint(8, 8, this.balance);
-    stream.writeUint16(0);  // reserved
+    stream.writeUint16(0); // reserved
   }
   override getContentSize(): number {
-    let size = 4;   // super.getContentSize() for FullBox (version+flags)
-    size += 2 + 2;  // balance, reserved
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 2 + 2; // balance, reserved
     return size;
   }
 }
@@ -657,7 +654,7 @@ export class DrefBox extends ContainerFullBox {
 }
 
 export class UrlBox extends FullBox {
-  location: string|null = null;
+  location: string | null = null;
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
     if (this.flags !== 1) {
@@ -671,9 +668,9 @@ export class UrlBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
     if (this.flags !== 1 && this.location) {
-      size += this.location.length + 1;  // location (null-terminated)
+      size += this.location.length + 1; // location (null-terminated)
     }
     return size;
   }
@@ -691,7 +688,7 @@ export class PaspBox extends Box {
     stream.writeUint32(this.vSpacing);
   }
   override getContentSize(): number {
-    return 4 + 4;  // hSpacing, vSpacing
+    return 4 + 4; // hSpacing, vSpacing
   }
 }
 
@@ -710,7 +707,7 @@ export class BtrtBox extends Box {
     stream.writeUint32(this.avgBitrate);
   }
   override getContentSize(): number {
-    return 4 + 4 + 4;  // bufferSizeDB, maxBitrate, avgBitrate
+    return 4 + 4 + 4; // bufferSizeDB, maxBitrate, avgBitrate
   }
 }
 
@@ -734,16 +731,18 @@ export class SttsBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.entries.length * (4 + 4);  // sampleCount, sampleDelta
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.entries.length * (4 + 4); // sampleCount, sampleDelta
     return size;
   }
 }
 
 export class StscBox extends FullBox {
   entries: Array<{
-    firstChunk: number; samplesPerChunk: number; sampleDescriptionIndex: number;
+    firstChunk: number;
+    samplesPerChunk: number;
+    sampleDescriptionIndex: number;
   }> = [];
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
@@ -769,17 +768,16 @@ export class StscBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.entries.length *
-        (4 + 4 + 4);  // firstChunk, samplesPerChunk, sampleDescriptionIndex
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.entries.length * (4 + 4 + 4); // firstChunk, samplesPerChunk, sampleDescriptionIndex
     return size;
   }
 }
 
 export class StszBox extends FullBox {
-  sampleSize = 0;   // Default sample size if they're all the same size
-  sampleCount = 0;  // number of samples in the track
+  sampleSize = 0; // Default sample size if they're all the same size
+  sampleCount = 0; // number of samples in the track
   sampleSizes: number[] = [];
   override parseContent(stream: DataStream) {
     super.parseContent(stream);
@@ -802,10 +800,10 @@ export class StszBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;   // super.getContentSize() for FullBox (version+flags)
-    size += 4 + 4;  // sampleSize, sampleCount
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4 + 4; // sampleSize, sampleCount
     if (this.sampleSize === 0) {
-      size += this.sampleSizes.length * 4;  // individual sample sizes
+      size += this.sampleSizes.length * 4; // individual sample sizes
     }
     return size;
   }
@@ -842,9 +840,9 @@ export class StcoBox extends FullBox {
     this.writeContentInternal(stream, false);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.chunkOffsets.length * 4;  // 4 bytes per offset for stco
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.chunkOffsets.length * 4; // 4 bytes per offset for stco
     return size;
   }
 }
@@ -857,9 +855,9 @@ export class Co64Box extends StcoBox {
     this.writeContentInternal(stream, /* is64bit= */ true);
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.chunkOffsets.length * 8;  // 8 bytes per offset for co64
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.chunkOffsets.length * 8; // 8 bytes per offset for co64
     return size;
   }
 }
@@ -884,9 +882,9 @@ export class CttsBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.entries.length * (4 + 4);  // sampleCount, sampleOffset
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.entries.length * (4 + 4); // sampleCount, sampleOffset
     return size;
   }
 }
@@ -908,9 +906,9 @@ export class StssBox extends FullBox {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // super.getContentSize() for FullBox (version+flags)
-    size += 4;     // entry_count
-    size += this.sampleNumbers.length * 4;  // sampleNumber
+    let size = 4; // super.getContentSize() for FullBox (version+flags)
+    size += 4; // entry_count
+    size += this.sampleNumbers.length * 4; // sampleNumber
     return size;
   }
 }
@@ -927,7 +925,7 @@ export class KeydBox extends Box {
     stream.writeString(this.keyValue);
   }
   override getContentSize(): number {
-    return 4 + this.keyValue.length;  // keyNamespace, keyValue
+    return 4 + this.keyValue.length; // keyNamespace, keyValue
   }
 }
 
@@ -942,14 +940,14 @@ export class SampleEntryBox extends ContainerBox {
 
   override parseDataBeforeChildren(stream: DataStream): void {
     if (this.signalDataReferenceIndex()) {
-      stream.skip(6);  // reserved
+      stream.skip(6); // reserved
       this.dataReferenceIndex = stream.readUint16();
     }
   }
 
   override writeDataBeforeChildren(stream: DataStream): void {
     if (this.signalDataReferenceIndex()) {
-      for (let i = 0; i < 6; i++) stream.writeUint8(0);  // reserved
+      for (let i = 0; i < 6; i++) stream.writeUint8(0); // reserved
       stream.writeUint16(this.dataReferenceIndex);
     }
   }
@@ -974,38 +972,38 @@ export class VisualSampleEntryBox extends SampleEntryBox {
   override parseDataBeforeChildren(stream: DataStream): void {
     super.parseDataBeforeChildren(stream);
 
-    stream.skip(16);  // pre_defined, reserved
+    stream.skip(16); // pre_defined, reserved
     this.width = stream.readUint16();
     this.height = stream.readUint16();
     this.horizresolution = stream.readFixedPoint(16, 16);
     this.vertresolution = stream.readFixedPoint(16, 16);
-    stream.skip(4);  // reserved
+    stream.skip(4); // reserved
     this.frameCount = stream.readUint16();
     const compressorNameLen = stream.readUint8();
     this.compressorName = stream.readString(compressorNameLen);
-    stream.skip(31 - compressorNameLen);  // skip rest of 32 bytes
+    stream.skip(31 - compressorNameLen); // skip rest of 32 bytes
     this.depth = stream.readUint16();
-    stream.skip(2);  // pre_defined
+    stream.skip(2); // pre_defined
   }
 
   override writeDataBeforeChildren(stream: DataStream): void {
     super.writeDataBeforeChildren(stream);
 
-    stream.writeUint16(0);                              // pre_defined
-    stream.writeUint16(0);                              // reserved
-    for (let i = 0; i < 3; i++) stream.writeUint32(0);  // pre_defined[0,1,2]
+    stream.writeUint16(0); // pre_defined
+    stream.writeUint16(0); // reserved
+    for (let i = 0; i < 3; i++) stream.writeUint32(0); // pre_defined[0,1,2]
 
     stream.writeUint16(this.width);
     stream.writeUint16(this.height);
     stream.writeFixedPoint(16, 16, this.horizresolution);
     stream.writeFixedPoint(16, 16, this.vertresolution);
-    stream.writeUint32(0);  // reserved
+    stream.writeUint32(0); // reserved
     stream.writeUint16(this.frameCount);
     stream.writeUint8(this.compressorName.length);
     stream.writeString(this.compressorName);
     for (let i = this.compressorName.length; i < 31; ++i) stream.writeUint8(0);
     stream.writeUint16(this.depth);
-    stream.writeInt16(-1);  // pre_defined = -1
+    stream.writeInt16(-1); // pre_defined = -1
   }
   protected override getContentSizeBeforeChildren(): number {
     return 78;
@@ -1019,21 +1017,21 @@ export class AudioSampleEntryBox extends SampleEntryBox {
 
   override parseDataBeforeChildren(stream: DataStream): void {
     super.parseDataBeforeChildren(stream);
-    stream.skip(8);  // reserved
+    stream.skip(8); // reserved
     this.channelCount = stream.readUint16();
     this.sampleSize = stream.readUint16();
-    stream.skip(4);  // pre_defined, reserved
+    stream.skip(4); // pre_defined, reserved
     this.sampleRate = stream.readFixedPoint(16, 16);
   }
 
   override writeDataBeforeChildren(stream: DataStream): void {
     super.writeDataBeforeChildren(stream);
-    stream.writeUint32(0);  // reserved[0]
-    stream.writeUint32(0);  // reserved[1]
+    stream.writeUint32(0); // reserved[0]
+    stream.writeUint32(0); // reserved[1]
     stream.writeUint16(this.channelCount);
     stream.writeUint16(this.sampleSize);
-    stream.writeUint16(0);  // pre_defined
-    stream.writeUint16(0);  // reserved
+    stream.writeUint16(0); // pre_defined
+    stream.writeUint16(0); // reserved
     stream.writeFixedPoint(16, 16, this.sampleRate);
   }
   protected override getContentSizeBeforeChildren(): number {
@@ -1068,7 +1066,7 @@ export class TrackReferenceTypeBox extends Box {
     }
   }
   override getContentSize(): number {
-    return this.trackIds.length * 4;  // trackIds
+    return this.trackIds.length * 4; // trackIds
   }
 }
 
@@ -1083,8 +1081,10 @@ export class It35SampleEntryBox extends SampleEntryBox {
       let isOldSyntax = false;
       let firstZeroIndex = -1;
       const data = new Uint8Array(
-          stream.view.buffer, stream.view.byteOffset + stream.position,
-          stream.remaining);
+        stream.view.buffer,
+        stream.view.byteOffset + stream.position,
+        stream.remaining,
+      );
       for (let i = 0; i < data.length; ++i) {
         if (data[i] === 0) {
           firstZeroIndex = i;
@@ -1109,7 +1109,8 @@ export class It35SampleEntryBox extends SampleEntryBox {
       } else {
         const it35IdentifierLength = stream.readUint8();
         this.t35Identifier = stream.readUint8Array(
-            Math.min(it35IdentifierLength, stream.remaining));
+          Math.min(it35IdentifierLength, stream.remaining),
+        );
       }
     }
   }
@@ -1120,8 +1121,10 @@ export class It35SampleEntryBox extends SampleEntryBox {
   }
   protected override getContentSizeBeforeChildren(): number {
     return (
-        super.getContentSizeBeforeChildren() + 1 +  // t35_identifier_length
-        this.t35Identifier.length);
+      super.getContentSizeBeforeChildren() +
+      1 + // t35_identifier_length
+      this.t35Identifier.length
+    );
   }
 }
 
@@ -1147,7 +1150,7 @@ export class Av1CBox extends Box {
   chromaSamplePosition = 0;
   initialPresentationDelayPresent = 0;
   initialPresentationDelayMinusOne = 0;
-  configOBUs: Uint8Array|null = null;
+  configOBUs: Uint8Array | null = null;
 
   override parseContent(stream: DataStream): void {
     const bitstream = new Bitstream(stream.readUint8Array(stream.remaining));
@@ -1162,12 +1165,12 @@ export class Av1CBox extends Box {
     this.chromaSubsamplingX = bitstream.readBits(1);
     this.chromaSubsamplingY = bitstream.readBits(1);
     this.chromaSamplePosition = bitstream.readBits(2);
-    bitstream.readBits(3);  // reserved
+    bitstream.readBits(3); // reserved
     this.initialPresentationDelayPresent = bitstream.readBits(1);
     if (this.initialPresentationDelayPresent) {
       this.initialPresentationDelayMinusOne = bitstream.readBits(4);
     } else {
-      bitstream.readBits(4);  // reserved
+      bitstream.readBits(4); // reserved
     }
     const remainingBytes = bitstream.bytesLeft();
     if (remainingBytes > 0) {
@@ -1176,31 +1179,28 @@ export class Av1CBox extends Box {
   }
   override writeContent(stream: DataStream): void {
     stream.writeUint8(
-        new ByteWriter().addBits(this.marker, 1).addBits(this.version, 7).value,
+      new ByteWriter().addBits(this.marker, 1).addBits(this.version, 7).value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(this.seqProfile, 3)
-            .addBits(this.seqLevelIdx0, 5)
-            .value,
+      new ByteWriter().addBits(this.seqProfile, 3).addBits(this.seqLevelIdx0, 5)
+        .value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(this.seqTier0, 1)
-            .addBits(this.highBitdepth, 1)
-            .addBits(this.twelveBit, 1)
-            .addBits(this.monochrome, 1)
-            .addBits(this.chromaSubsamplingX, 1)
-            .addBits(this.chromaSubsamplingY, 1)
-            .addBits(this.chromaSamplePosition, 2)
-            .value,
+      new ByteWriter()
+        .addBits(this.seqTier0, 1)
+        .addBits(this.highBitdepth, 1)
+        .addBits(this.twelveBit, 1)
+        .addBits(this.monochrome, 1)
+        .addBits(this.chromaSubsamplingX, 1)
+        .addBits(this.chromaSubsamplingY, 1)
+        .addBits(this.chromaSamplePosition, 2).value,
     );
-    const writer = new ByteWriter().addBits(0, 3);  // 3 reserved bits
+    const writer = new ByteWriter().addBits(0, 3); // 3 reserved bits
     writer.addBits(this.initialPresentationDelayPresent ? 1 : 0, 1);
     if (this.initialPresentationDelayPresent) {
       writer.addBits(this.initialPresentationDelayMinusOne, 4);
     } else {
-      writer.addBits(0, 4);  // reserved
+      writer.addBits(0, 4); // reserved
     }
     stream.writeUint8(writer.value);
 
@@ -1209,8 +1209,8 @@ export class Av1CBox extends Box {
     }
   }
   override getContentSize(): number {
-    let size = 4;  // 4 bytes for the fixed fields (marker/version,
-                   // profile/level, tier/bitdepth, delay)
+    let size = 4; // 4 bytes for the fixed fields (marker/version,
+    // profile/level, tier/bitdepth, delay)
     size += this.configOBUs ? this.configOBUs.length : 0;
     return size;
   }
@@ -1296,11 +1296,10 @@ export class HvcCBox extends Box {
   override writeContent(stream: DataStream): void {
     stream.writeUint8(this.configurationVersion);
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(this.generalProfileSpace, 2)
-            .addBits(this.generalTierFlag, 1)
-            .addBits(this.generalProfileIdc, 5)
-            .value,
+      new ByteWriter()
+        .addBits(this.generalProfileSpace, 2)
+        .addBits(this.generalTierFlag, 1)
+        .addBits(this.generalProfileIdc, 5).value,
     );
     stream.writeUint32(this.generalProfileCompatibilityFlags);
     for (let i = 0; i < 6; i++) {
@@ -1308,53 +1307,40 @@ export class HvcCBox extends Box {
     }
     stream.writeUint8(this.generalLevelIdc);
     stream.writeUint16(
-        new ByteWriter()
-            .addBits(0xf, 4)
-            .addBits(this.minSpatialSegmentationIdc, 12)
-            .value,
+      new ByteWriter()
+        .addBits(0xf, 4)
+        .addBits(this.minSpatialSegmentationIdc, 12).value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(0x3f, 6)
-            .addBits(this.parallelismType, 2)
-            .value,
+      new ByteWriter().addBits(0x3f, 6).addBits(this.parallelismType, 2).value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(0x3f, 6)
-            .addBits(this.chromaFormatIdc, 2)
-            .value,
+      new ByteWriter().addBits(0x3f, 6).addBits(this.chromaFormatIdc, 2).value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(0x1f, 5)
-            .addBits(this.bitDepthLumaMinus8, 3)
-            .value,
+      new ByteWriter().addBits(0x1f, 5).addBits(this.bitDepthLumaMinus8, 3)
+        .value,
     );
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(0x1f, 5)
-            .addBits(this.bitDepthChromaMinus8, 3)
-            .value,
+      new ByteWriter().addBits(0x1f, 5).addBits(this.bitDepthChromaMinus8, 3)
+        .value,
     );
     stream.writeUint16(this.avgFrameRate);
     stream.writeUint8(
-        new ByteWriter()
-            .addBits(this.constantFrameRate, 2)
-            .addBits(this.numTemporalLayers, 3)
-            .addBits(this.temporalIdNested, 1)
-            .addBits(this.lengthSizeMinusOne, 2)
-            .value,
+      new ByteWriter()
+        .addBits(this.constantFrameRate, 2)
+        .addBits(this.numTemporalLayers, 3)
+        .addBits(this.temporalIdNested, 1)
+        .addBits(this.lengthSizeMinusOne, 2).value,
     );
     stream.writeUint8(this.numOfArrays);
     for (let i = 0; i < this.numOfArrays; i++) {
       const naluArray = this.naluArrays[i];
       stream.writeUint8(
-          new ByteWriter()
-              .addBits(naluArray.completeness, 1)
-              .addBits(0, 1)  // reserved
-              .addBits(naluArray.naluType, 6)
-              .value,
+        new ByteWriter()
+          .addBits(naluArray.completeness, 1)
+          .addBits(0, 1) // reserved
+          .addBits(naluArray.naluType, 6).value,
       );
       stream.writeUint16(naluArray.nalus.length);
       for (const nalu of naluArray.nalus) {
@@ -1365,40 +1351,40 @@ export class HvcCBox extends Box {
   }
   override getContentSize(): number {
     let size = 0;
-    size += 1;  // configurationVersion
-    size += 1;  // profileByte
-    size += 4;  // generalProfileCompatibilityFlags
-    size += 6;  // generalConstraintIndicatorFlags
-    size += 1;  // generalLevelIdc
-    size += 2;  // minSpatialSegmentationIdc
-    size += 1;  // parallelismType
-    size += 1;  // chromaFormatIdc
-    size += 1;  // bitDepthLumaMinus8
-    size += 1;  // bitDepthChromaMinus8
-    size += 2;  // avgFrameRate
-    size += 1;  // naluByte
-    size += 1;  // numOfArrays
+    size += 1; // configurationVersion
+    size += 1; // profileByte
+    size += 4; // generalProfileCompatibilityFlags
+    size += 6; // generalConstraintIndicatorFlags
+    size += 1; // generalLevelIdc
+    size += 2; // minSpatialSegmentationIdc
+    size += 1; // parallelismType
+    size += 1; // chromaFormatIdc
+    size += 1; // bitDepthLumaMinus8
+    size += 1; // bitDepthChromaMinus8
+    size += 2; // avgFrameRate
+    size += 1; // naluByte
+    size += 1; // numOfArrays
 
     for (const naluArray of this.naluArrays) {
-      size += 1;  // arrayInfo
-      size += 2;  // numNalus
+      size += 1; // arrayInfo
+      size += 2; // numNalus
       for (const nalu of naluArray.nalus) {
-        size += 2;            // naluLength
-        size += nalu.length;  // nalu data
+        size += 2; // naluLength
+        size += nalu.length; // nalu data
       }
     }
     return size;
   }
 }
 
-function parseBox(stream: DataStream, parentBox: Box|null): Box|null {
+function parseBox(stream: DataStream, parentBox: Box | null): Box | null {
   if (stream.remaining < 8) return null;
   const isTopLevel = parentBox === null;
   const header = readBoxHeader(stream, isTopLevel);
   if (!header) return null;
   const {size, type, headerSize} = header;
 
-  const boxConstructors: {[type: string]: BoxConstructor;} = {
+  const boxConstructors: {[type: string]: BoxConstructor} = {
     'meta': MetaBox,
     'moov': MoovBox,
     'trak': TrakBox,
@@ -1446,13 +1432,13 @@ function parseBox(stream: DataStream, parentBox: Box|null): Box|null {
     'mdat': MdatBox,
   };
 
-  const parseFuncsForChildrenOf: {[type: string]: BoxConstructor;} = {
+  const parseFuncsForChildrenOf: {[type: string]: BoxConstructor} = {
     'tref': TrackReferenceTypeBox,
     // Children of 'keys' are of type MetadataKeyBox which is a container box.
     'keys': ContainerBox,
   };
 
-  const parseFuncsForMetaTrack: {[type: string]: BoxConstructor;} = {
+  const parseFuncsForMetaTrack: {[type: string]: BoxConstructor} = {
     'it35': It35PayloadBox,
   };
 
@@ -1462,8 +1448,12 @@ function parseBox(stream: DataStream, parentBox: Box|null): Box|null {
   } else if (type === 'setu' && parentBox instanceof ContainerBox) {
     // MetadataSetupBox
     const keyd = parentBox.getChild('keyd', KeydBox);
-    if (keyd && keyd.keyNamespace === 'me4c' && keyd.keyValue &&
-        parseFuncsForMetaTrack[keyd.keyValue]) {
+    if (
+      keyd &&
+      keyd.keyNamespace === 'me4c' &&
+      keyd.keyValue &&
+      parseFuncsForMetaTrack[keyd.keyValue]
+    ) {
       constructorFunc = parseFuncsForMetaTrack[keyd.keyValue];
     } else {
       constructorFunc = GenericBox;
@@ -1499,7 +1489,7 @@ function writeBox(box: Box, stream: DataStream): void {
   const largeSize = box.size > 0xffffffff;
   const headerSize = largeSize ? 16 : 8;
   if (largeSize) {
-    stream.writeUint32(1);  // Size 1, indicating a large size.
+    stream.writeUint32(1); // Size 1, indicating a large size.
     stream.writeString(box.type);
     stream.writeBigUint64(BigInt(box.size));
   } else {
