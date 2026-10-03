@@ -83,6 +83,9 @@ export class Curves3dRenderer implements Renderer {
   /** Per-frame AGTM metadata list (with UI overrides applied). */
   private metadataList: AgtmMetadata[] = [];
 
+  /** Optional per-frame smoothed AGTM metadata list. */
+  private smoothedMetadataList: AgtmMetadata[] | null = null;
+
   /** Current playback timestamp of the video in seconds. */
   private currentTime = 0;
 
@@ -98,16 +101,79 @@ export class Curves3dRenderer implements Renderer {
    */
   private showGainCurve = false;
 
-  /** Ensures the `plotly_click` event listener is attached only once. */
+  /** Ensures Plotly event listeners are attached only once. */
   private isClickInitialized = false;
 
-  /** Handles clicking on the 3D surface to seek the video timestamp. */
-  private readonly onPlotlyClick = (eventData: any) => {
-    if (eventData?.points?.length > 0) {
-      const clickedX = eventData.points[0].x;
+  /** Currently hovered surface grid indices `{xi, yi}`, if any. */
+  private hoverIndices: {xi: number; yi: number} | null = null;
+
+  /** Last valid hovered grid indices `{xi, yi}` before any unhover event. */
+  private lastHoverIndices: {xi: number; yi: number} | null = null;
+
+  /**
+   * Surface grid indices `{xi, yi}` pinned by clicking on the surface. When
+   * non-null, the slice curves stay locked at these indices during zoom/pan
+   * and hover/unhover.
+   */
+  private pinnedIndices: {xi: number; yi: number} | null = null;
+
+  /** Pointer-down client coordinates used to distinguish a click from a 3D drag. */
+  private pointerDownPos: {x: number; y: number} | null = null;
+
+  /** Indices in `data` of the hover slice `scatter3d` traces. */
+  private hoverTraceIndices: number[] = [];
+
+  /** Pending `requestAnimationFrame` handle for coalesced hover updates. */
+  private hoverRafId: number | null = null;
+
+  /** Keydown handler to allow unpinning the slice curves with Escape. */
+  private readonly onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && this.pinnedIndices !== null) {
+      this.pinnedIndices = null;
+      this.scheduleHoverFlush();
+    }
+  };
+
+  /** Records pointer-down coordinates on the 3D container. */
+  private readonly onPointerDown = (e: PointerEvent) => {
+    if (e.button === 0) {
+      this.pointerDownPos = {x: e.clientX, y: e.clientY};
+    }
+  };
+
+  /**
+   * Detects a click (pointerup within 5px of pointerdown) on the 3D scene and
+   * toggles pinning the slice curves on the surface.
+   */
+  private readonly onPointerUp = (e: PointerEvent) => {
+    if (e.button !== 0 || !this.pointerDownPos) {
+      return;
+    }
+    const dist = Math.hypot(
+      e.clientX - this.pointerDownPos.x,
+      e.clientY - this.pointerDownPos.y,
+    );
+    this.pointerDownPos = null;
+    if (dist >= 5) {
+      // User dragged to rotate/pan the 3D camera; do not change pin state.
+      return;
+    }
+
+    if (this.pinnedIndices !== null) {
+      // Unpin so the slice curves follow mouse hover again.
+      this.pinnedIndices = null;
+      this.scheduleHoverFlush();
+      return;
+    }
+
+    const targetIndices = this.hoverIndices ?? this.lastHoverIndices;
+    if (targetIndices && this.cachedSurface) {
+      this.pinnedIndices = {...targetIndices};
+      this.hoverIndices = {...targetIndices};
+      this.scheduleHoverFlush();
+
+      const clickedX = this.cachedSurface.x[targetIndices.xi];
       if (typeof clickedX === 'number' && isFinite(clickedX)) {
-        // Add a small positive epsilon when seeking to a frame start time
-        // so the browser media pipeline does not round down to the previous frame.
         const targetTime =
           clickedX > 0
             ? Math.min(
@@ -118,6 +184,198 @@ export class Curves3dRenderer implements Renderer {
         this.onTimeSelectedCallback(targetTime);
       }
     }
+  };
+
+  /**
+   * Finds the closest `{xi, yi}` grid indices on `cachedSurface` for the given
+   * surface coordinates `(xVal, yVal)`.
+   */
+  private findGridIndices(
+    xVal: unknown,
+    yVal: unknown,
+  ): {xi: number; yi: number} | null {
+    const surface = this.cachedSurface;
+    if (
+      !surface ||
+      typeof xVal !== 'number' ||
+      !isFinite(xVal) ||
+      typeof yVal !== 'number' ||
+      !isFinite(yVal)
+    ) {
+      return null;
+    }
+
+    let xi = 0;
+    let bestDx = Infinity;
+    for (let i = 0; i < surface.x.length; ++i) {
+      const dx = Math.abs(surface.x[i] - xVal);
+      if (dx < bestDx) {
+        bestDx = dx;
+        xi = i;
+      }
+    }
+
+    let yi = 0;
+    let bestDy = Infinity;
+    for (let i = 0; i < surface.y.length; ++i) {
+      const dy = Math.abs(surface.y[i] - yVal);
+      if (dy < bestDy) {
+        bestDy = dy;
+        yi = i;
+      }
+    }
+
+    return {xi, yi};
+  }
+
+  /**
+   * Updates `lastHoverIndices` if Plotly emits `plotly_click` with point coords.
+   */
+  private readonly onPlotlyClick = (eventData: any) => {
+    if (eventData?.points?.length > 0) {
+      const pt = eventData.points[0];
+      const clickedIndices = this.findGridIndices(pt.x, pt.y);
+      if (clickedIndices) {
+        this.lastHoverIndices = clickedIndices;
+      }
+    }
+  };
+
+  /**
+   * Finds the index of the frame active at `this.currentTime`. Uses a 1ms
+   * tolerance so timestamps quantized to 0.001s (from `#TimeSlider`) match
+   * their corresponding frame presentation timestamp.
+   */
+  private getFrameIndexForCurrentTime(): number {
+    return findSampleIndexForTime(this.frameTimes, this.currentTime, 1e-3) ?? 0;
+  }
+
+  /**
+   * Synchronizes the timestamp index (`xi`) of any active or pinned slice with
+   * `this.currentTime` when the video frame changes (e.g. via prev/next frame
+   * buttons or timeline scrubbing).
+   */
+  private syncTimeIndexWithCurrentTime() {
+    const frameIdx = this.getFrameIndexForCurrentTime();
+    if (this.pinnedIndices !== null) {
+      this.pinnedIndices = {xi: frameIdx, yi: this.pinnedIndices.yi};
+    }
+    if (this.hoverIndices !== null) {
+      this.hoverIndices = {xi: frameIdx, yi: this.hoverIndices.yi};
+    }
+    if (this.lastHoverIndices !== null) {
+      this.lastHoverIndices = {xi: frameIdx, yi: this.lastHoverIndices.yi};
+    }
+  }
+
+  /**
+   * Flushes the pending hover/pinned slice update outside Plotly's synchronous
+   * `plotly_hover` dispatch loop so internal WebGL trace references stay valid.
+   */
+  private readonly flushHoverUpdate = () => {
+    this.hoverRafId = null;
+    const surface = this.cachedSurface;
+    if (!surface || !this.hoverTraceIndices.length) {
+      return;
+    }
+
+    const activeIndices = this.pinnedIndices ?? this.hoverIndices;
+    const hasYSlice =
+      activeIndices !== null &&
+      activeIndices.xi < surface.x.length &&
+      activeIndices.yi < surface.y.length;
+    const xi = hasYSlice
+      ? activeIndices!.xi
+      : Math.min(this.getFrameIndexForCurrentTime(), surface.x.length - 1);
+    const yi = hasYSlice ? activeIndices!.yi : 0;
+
+    const hx = surface.x[xi] ?? 0;
+    const hy = surface.y[yi] ?? 0;
+    const xConst = surface.y.map(() => hx);
+    const yConst = surface.x.map(() => hy);
+    const sliceAlongInput = surface.y.map((_, r) => surface.z[r][xi]);
+    const sliceAlongTime = surface.z[yi];
+
+    const hasSmoothed =
+      surface.zSmoothed !== null && this.hoverTraceIndices.length === 4;
+    if (hasSmoothed) {
+      const smoothedAlongInput = surface.y.map(
+        (_, r) => surface.zSmoothed![r][xi],
+      );
+      const smoothedAlongTime = surface.zSmoothed![yi];
+      plotly.restyle(
+        this.container,
+        {
+          x: [xConst, surface.x, xConst, surface.x],
+          y: [surface.y, yConst, surface.y, yConst],
+          z: [
+            sliceAlongInput,
+            sliceAlongTime,
+            smoothedAlongInput,
+            smoothedAlongTime,
+          ],
+          visible: [true, hasYSlice, true, hasYSlice],
+        } as any,
+        this.hoverTraceIndices,
+      );
+      return;
+    }
+    plotly.restyle(
+      this.container,
+      {
+        x: [xConst, surface.x],
+        y: [surface.y, yConst],
+        z: [sliceAlongInput, sliceAlongTime],
+        visible: [true, hasYSlice],
+      } as any,
+      this.hoverTraceIndices,
+    );
+  };
+
+  /** Schedules a single `requestAnimationFrame` to apply hover slice updates. */
+  private scheduleHoverFlush() {
+    if (this.hoverRafId === null) {
+      this.hoverRafId = requestAnimationFrame(this.flushHoverUpdate);
+    }
+  }
+
+  /** Handles hovering on either 3D surface to update the slice curves. */
+  private readonly onPlotlyHover = (eventData: any) => {
+    if (!eventData?.points?.length || !this.hoverTraceIndices.length) {
+      return;
+    }
+    const pt = eventData.points[0];
+    const indices = this.findGridIndices(pt.x, pt.y);
+    if (!indices) {
+      return;
+    }
+    this.lastHoverIndices = indices;
+
+    if (this.pinnedIndices !== null) {
+      return;
+    }
+
+    if (
+      this.hoverIndices &&
+      this.hoverIndices.xi === indices.xi &&
+      this.hoverIndices.yi === indices.yi
+    ) {
+      return;
+    }
+    this.hoverIndices = indices;
+    this.scheduleHoverFlush();
+  };
+
+  /** Hides the slice curves when the pointer leaves the 3D surface (unless pinned). */
+  private readonly onPlotlyUnhover = () => {
+    if (this.pinnedIndices !== null) {
+      return;
+    }
+    if (!this.hoverIndices || !this.hoverTraceIndices.length) {
+      return;
+    }
+    this.hoverIndices = null;
+    this.scheduleHoverFlush();
   };
 
   /**
@@ -138,8 +396,15 @@ export class Curves3dRenderer implements Renderer {
     x: number[];
     y: number[];
     z: number[][];
+    zSmoothed: number[][] | null;
     maxY: number;
   } | null = null;
+
+  /**
+   * Preserves per-trace visibility across `plotly.react` updates when toggled
+   * via the legend.
+   */
+  private readonly traceVisibility = new Map<string, boolean | 'legendonly'>();
 
   /**
    * Persistent Plotly layout object passed across `plotly.react()` calls so
@@ -151,6 +416,7 @@ export class Curves3dRenderer implements Renderer {
    * match the video timestamp display (`#TimeSliderValue`).
    */
   private readonly layout: Partial<Layout> = {
+    uirevision: 'true',
     showlegend: true,
     legend: {
       x: 0.02,
@@ -183,7 +449,7 @@ export class Curves3dRenderer implements Renderer {
       b: 0,
       t: 35,
     },
-  };
+  } as Partial<Layout>;
 
   /**
    * @param container DOM element where Plotly renders the 3D surface.
@@ -213,6 +479,9 @@ export class Curves3dRenderer implements Renderer {
       'change',
       this.showGainCurveChangeHandler,
     );
+    this.container.addEventListener('pointerdown', this.onPointerDown, true);
+    this.container.addEventListener('pointerup', this.onPointerUp, true);
+    window.addEventListener('keydown', this.onKeyDown);
   }
 
   /**
@@ -224,7 +493,16 @@ export class Curves3dRenderer implements Renderer {
       'change',
       this.showGainCurveChangeHandler,
     );
+    this.container.removeEventListener('pointerdown', this.onPointerDown, true);
+    this.container.removeEventListener('pointerup', this.onPointerUp, true);
+    window.removeEventListener('keydown', this.onKeyDown);
+    if (this.hoverRafId !== null) {
+      cancelAnimationFrame(this.hoverRafId);
+      this.hoverRafId = null;
+    }
     (this.container as any).off?.('plotly_click', this.onPlotlyClick);
+    (this.container as any).off?.('plotly_hover', this.onPlotlyHover);
+    (this.container as any).off?.('plotly_unhover', this.onPlotlyUnhover);
     plotly.purge(this.container);
   }
 
@@ -259,7 +537,10 @@ export class Curves3dRenderer implements Renderer {
     contentPrimaries: number,
   ): void {
     if (imageBitmapSource instanceof HTMLVideoElement) {
-      this.currentTime = imageBitmapSource.currentTime;
+      if (Math.abs(imageBitmapSource.currentTime - this.currentTime) > 1e-5) {
+        this.currentTime = imageBitmapSource.currentTime;
+        this.syncTimeIndexWithCurrentTime();
+      }
     }
   }
 
@@ -270,18 +551,6 @@ export class Curves3dRenderer implements Renderer {
     dst: Uint8Array,
     dstStride: number,
   ): void {}
-
-  /**
-   * Formats a timestamp in seconds to match the `000.000` format displayed in
-   * the hdrscope video timestamp input (`#TimeSliderValue`).
-   */
-  private formatTimestamp(timeSec: number): string {
-    return timeSec.toLocaleString('fullwide', {
-      minimumFractionDigits: 3,
-      maximumFractionDigits: 3,
-      minimumIntegerDigits: 3,
-    });
-  }
 
   /**
    * Updates the target display HDR headroom and invalidates the cached surface
@@ -320,20 +589,30 @@ export class Curves3dRenderer implements Renderer {
     metadataList: AgtmMetadata[],
     currentTime: number,
     videoDuration: number,
+    smoothedMetadataList: AgtmMetadata[] | null = null,
   ) {
+    const timeChanged = Math.abs(currentTime - this.currentTime) > 1e-5;
     this.currentTime = currentTime;
     this.videoDuration = videoDuration;
 
     const newCacheKey = JSON.stringify({
       frameTimes,
       metadataList,
+      smoothedMetadataList,
       videoDuration,
     });
     if (this.cachedSurface === null || newCacheKey !== this.surfaceCacheKey) {
+      if (frameTimes.length !== this.frameTimes.length) {
+        this.pinnedIndices = null;
+      }
       this.surfaceCacheKey = newCacheKey;
       this.frameTimes = frameTimes.length > 0 ? frameTimes : [0];
       this.metadataList = metadataList;
+      this.smoothedMetadataList = smoothedMetadataList;
       this.cachedSurface = null;
+    }
+    if (timeChanged) {
+      this.syncTimeIndexWithCurrentTime();
     }
   }
 
@@ -366,6 +645,7 @@ export class Curves3dRenderer implements Renderer {
     const numFrames = Math.max(1, this.frameTimes.length);
 
     const effectiveMetadata: Array<AgtmMetadata | undefined> = [];
+    const effectiveSmoothedMetadata: Array<AgtmMetadata | undefined> = [];
     const xCoords: number[] = [];
 
     // Always populate X coordinates for every video frame timestamp so that
@@ -379,6 +659,13 @@ export class Curves3dRenderer implements Renderer {
           ? this.metadataList[i]
           : this.metadataList[this.metadataList.length - 1];
       effectiveMetadata.push(meta);
+      if (this.smoothedMetadataList && this.smoothedMetadataList.length > 0) {
+        const smMeta =
+          i < this.smoothedMetadataList.length
+            ? this.smoothedMetadataList[i]
+            : this.smoothedMetadataList[this.smoothedMetadataList.length - 1];
+        effectiveSmoothedMetadata.push(smMeta);
+      }
     }
 
     // If only 1 frame timestamp is available (e.g. still image or unparsed
@@ -396,6 +683,9 @@ export class Curves3dRenderer implements Renderer {
         const t = t0 + ((endT - t0) * step) / (numSteps - 1);
         xCoords.push(t);
         effectiveMetadata.push(effectiveMetadata[0]);
+        if (effectiveSmoothedMetadata.length > 0) {
+          effectiveSmoothedMetadata.push(effectiveSmoothedMetadata[0]);
+        }
       }
     }
 
@@ -434,35 +724,33 @@ export class Curves3dRenderer implements Renderer {
       }
     }
 
+    let zSmoothedSurface: number[][] | null = null;
+    if (effectiveSmoothedMetadata.length > 0) {
+      zSmoothedSurface = Array.from({length: NUM_Y_POINTS}, () =>
+        new Array<number>(xCoords.length).fill(0),
+      );
+      for (let xi = 0; xi < xCoords.length; ++xi) {
+        const meta = effectiveSmoothedMetadata[xi];
+        if (meta) {
+          const colZ = this.evaluateCurveAt(meta, yCoords);
+          for (let yi = 0; yi < NUM_Y_POINTS; ++yi) {
+            zSmoothedSurface[yi][xi] = colZ[yi];
+          }
+        } else {
+          for (let yi = 0; yi < NUM_Y_POINTS; ++yi) {
+            zSmoothedSurface[yi][xi] = this.showGainCurve ? 0 : yCoords[yi];
+          }
+        }
+      }
+    }
+
     this.cachedSurface = {
       x: xCoords,
       y: yCoords,
       z: zSurface,
+      zSmoothed: zSmoothedSurface,
       maxY,
     };
-  }
-
-  /**
-   * Finds the index of the frame active at `this.currentTime`. Uses a 1ms
-   * tolerance so timestamps quantized to 0.001s (from `#TimeSlider`) match
-   * their corresponding frame presentation timestamp.
-   */
-  private getFrameIndexForCurrentTime(): number {
-    return findSampleIndexForTime(this.frameTimes, this.currentTime, 1e-3) ?? 0;
-  }
-
-  /**
-   * Returns the AGTM metadata active at `this.currentTime`.
-   */
-  private getMetadataForCurrentTime(): AgtmMetadata | undefined {
-    if (this.metadataList.length === 0) {
-      return undefined;
-    }
-    const idx = Math.min(
-      this.getFrameIndexForCurrentTime(),
-      this.metadataList.length - 1,
-    );
-    return this.metadataList[idx];
   }
 
   draw() {
@@ -501,17 +789,39 @@ export class Curves3dRenderer implements Renderer {
       scene.zaxis.autorange = true;
     }
 
+    const existingTraces = (this.container as any).data as any[] | undefined;
+    if (existingTraces) {
+      for (const trace of existingTraces) {
+        if (trace?.uid) {
+          this.traceVisibility.set(trace.uid, trace.visible ?? true);
+        }
+      }
+    }
+
     const hoverLabel = this.showGainCurve ? 'Gain' : 'Output';
+    const baseName = this.showGainCurve
+      ? 'Gain Curve (log2)'
+      : 'Tone Map Curve';
+    const hasSmoothed = surface.zSmoothed !== null;
+
     const data: Data[] = [
       {
+        uid: 'curve_surface',
+        visible: this.traceVisibility.get('curve_surface') ?? true,
         x: surface.x,
         y: surface.y,
         z: surface.z,
         type: 'surface',
-        name: this.showGainCurve ? 'Gain Curve (log2)' : 'Tone Map Curve',
+        name: hasSmoothed ? `Unsmoothed ${baseName}` : baseName,
+        showlegend: true,
         colorscale: 'Viridis',
-        opacity: 0.9,
-        showscale: true,
+        opacity: hasSmoothed ? 0.55 : 0.9,
+        showscale: !hasSmoothed,
+        'contours': {
+          'x': {'highlight': false},
+          'y': {'highlight': false},
+          'z': {'highlight': false},
+        },
         colorbar: {
           title: plotlyTitle(this.showGainCurve ? 'Gain (log2)' : 'Output'),
           thickness: 15,
@@ -520,52 +830,133 @@ export class Curves3dRenderer implements Renderer {
         hovertemplate:
           'time: %{x:07.3f}<br>Input: %{y:.3f}<br>' +
           hoverLabel +
-          ': %{z:.3f}<extra></extra>',
+          ': %{z:.3f}<extra>' +
+          (hasSmoothed ? 'Unsmoothed' : '') +
+          '</extra>',
       } as any,
     ];
 
-    // Overlay a 3D line trace along the surface at the current video timestamp
-    // to highlight the active video frame's curve.
-    const currentMeta = this.getMetadataForCurrentTime();
-    if (currentMeta) {
-      const frameIdx = this.getFrameIndexForCurrentTime();
-      // If currentTime is within 1ms of the frame's presentation timestamp,
-      // snap the highlight X coordinate to the surface column so the 3D line
-      // lies flush on the surface mesh without floating due to sub-ms rounding.
-      const frameTime =
-        surface.x[Math.min(frameIdx, surface.x.length - 1)] ?? 0;
-      const highlightTime =
-        Math.abs(this.currentTime - frameTime) <= 1e-3
-          ? frameTime
-          : this.currentTime;
-      const highlightZ = this.evaluateCurveAt(currentMeta, surface.y);
-      const highlightX = surface.y.map(() => highlightTime);
+    if (surface.zSmoothed) {
       data.push({
-        x: highlightX,
+        uid: 'smoothed_surface',
+        visible: this.traceVisibility.get('smoothed_surface') ?? true,
+        x: surface.x,
         y: surface.y,
-        z: highlightZ,
-        type: 'scatter3d',
-        mode: 'lines',
-        name: `Current (${this.formatTimestamp(highlightTime)})`,
-        line: {
-          color: '#00ff00',
-          width: 7,
+        z: surface.zSmoothed,
+        type: 'surface',
+        name: `Smoothed ${baseName}`,
+        showlegend: true,
+        colorscale: 'Plasma',
+        opacity: 0.85,
+        showscale: true,
+        'contours': {
+          'x': {'highlight': false},
+          'y': {'highlight': false},
+          'z': {'highlight': false},
+        },
+        colorbar: {
+          title: plotlyTitle(this.showGainCurve ? 'Gain (log2)' : 'Output'),
+          thickness: 15,
+          len: 0.75,
         },
         hovertemplate:
           'time: %{x:07.3f}<br>Input: %{y:.3f}<br>' +
           hoverLabel +
-          ': %{z:.3f}<extra>Current Frame</extra>',
-        showlegend: true,
+          ': %{z:.3f}<extra>Smoothed</extra>',
       } as any);
+    }
+
+    // Add hover/pinned slice curves along Input and Time/Output axes.
+    const activeIndices = this.pinnedIndices ?? this.hoverIndices;
+    const hasYSlice =
+      activeIndices !== null &&
+      activeIndices.xi < surface.x.length &&
+      activeIndices.yi < surface.y.length;
+    const hxi = hasYSlice
+      ? activeIndices!.xi
+      : Math.min(this.getFrameIndexForCurrentTime(), surface.x.length - 1);
+    const hyi = hasYSlice ? activeIndices!.yi : 0;
+    const hx = surface.x[hxi] ?? 0;
+    const hy = surface.y[hyi] ?? 0;
+    const xConst = surface.y.map(() => hx);
+    const yConst = surface.x.map(() => hy);
+    const sliceAlongInput = surface.y.map((_, r) => surface.z[r][hxi]);
+    const sliceAlongTime = surface.z[hyi];
+
+    const firstHoverTraceIdx = data.length;
+    data.push(
+      {
+        uid: 'hover_slice_input',
+        visible: true,
+        x: xConst,
+        y: surface.y,
+        z: sliceAlongInput,
+        type: 'scatter3d',
+        mode: 'lines',
+        line: {color: '#00ff00', width: 5},
+        hoverinfo: 'none',
+        showlegend: false,
+      } as any,
+      {
+        uid: 'hover_slice_output',
+        visible: hasYSlice,
+        x: surface.x,
+        y: yConst,
+        z: sliceAlongTime,
+        type: 'scatter3d',
+        mode: 'lines',
+        line: {color: '#00ff00', width: 5},
+        hoverinfo: 'none',
+        showlegend: false,
+      } as any,
+    );
+
+    this.hoverTraceIndices = [firstHoverTraceIdx, firstHoverTraceIdx + 1];
+    if (hasSmoothed) {
+      const smoothedAlongInput = surface.y.map(
+        (_, r) => surface.zSmoothed![r][hxi],
+      );
+      const smoothedAlongTime = surface.zSmoothed![hyi];
+      data.push(
+        {
+          uid: 'hover_smoothed_input',
+          visible: true,
+          x: xConst,
+          y: surface.y,
+          z: smoothedAlongInput,
+          type: 'scatter3d',
+          mode: 'lines',
+          line: {color: '#ff2222', width: 5},
+          hoverinfo: 'none',
+          showlegend: false,
+        } as any,
+        {
+          uid: 'hover_smoothed_output',
+          visible: hasYSlice,
+          x: surface.x,
+          y: yConst,
+          z: smoothedAlongTime,
+          type: 'scatter3d',
+          mode: 'lines',
+          line: {color: '#ff2222', width: 5},
+          hoverinfo: 'none',
+          showlegend: false,
+        } as any,
+      );
+      this.hoverTraceIndices.push(
+        firstHoverTraceIdx + 2,
+        firstHoverTraceIdx + 3,
+      );
     }
 
     plotly.react(this.container, data, this.layout, {responsive: true});
 
-    // Attach click listener once to support seeking the video by clicking on
-    // any point on the 3D surface.
+    // Attach click and hover listeners once.
     if (!this.isClickInitialized) {
       this.isClickInitialized = true;
       (this.container as any).on('plotly_click', this.onPlotlyClick);
+      (this.container as any).on('plotly_hover', this.onPlotlyHover);
+      (this.container as any).on('plotly_unhover', this.onPlotlyUnhover);
     }
   }
 }

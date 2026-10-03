@@ -80,6 +80,7 @@ export class CurveEditor extends Base2dGraphRenderer {
   modelChangedCallback: (metadata: AgtmMetadata) => void;
   gainCurveMixHistogram: CdfBin[] | null = null;
   metadata: AgtmMetadata | null = null;
+  unsmoothedMetadata: AgtmMetadata | null = null;
   altrIndex = 0;
   viewScale: Point2;
   private defaultViewScale: Point2;
@@ -302,6 +303,10 @@ export class CurveEditor extends Base2dGraphRenderer {
         ? metadata.altr[this.altrIndex].curve
         : [{x: 0, y: 0}];
     this.curve = new PiecewiseCubic(points);
+  }
+
+  setUnsmoothedMetadata(metadata: AgtmMetadata | null) {
+    this.unsmoothedMetadata = metadata ? structuredClone(metadata) : null;
   }
 
   setAltrIndex(index: number) {
@@ -636,6 +641,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     wMax: number,
     headroom: number | null,
     color: string,
+    dashed = false,
   ) {
     if (altrMax == null) {
       headroom = altrMin.headroom;
@@ -648,7 +654,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.clipToGraphArea();
 
     // Draw control points only if a single curve was requested.
-    if (altrMax == null && this.showControlPoints) {
+    if (altrMax == null && this.showControlPoints && !dashed) {
       this.context.strokeStyle = color + 'FF';
       this.context.fillStyle = color + 'FF';
       for (let i = 0; i < curveMin.getControlPoints().length; ++i) {
@@ -672,6 +678,10 @@ export class CurveEditor extends Base2dGraphRenderer {
     {
       this.context.beginPath();
       this.context.lineWidth = 4;
+      if (dashed) {
+        this.context.setLineDash([8, 6]);
+        this.context.lineWidth = 3;
+      }
       this.context.strokeStyle = color + 'A0';
       const startX = Math.max(this.graphBottomLeft.x, this.graphAreaLeftX);
       for (let vX = startX; vX <= this.graphAreaRightX; vX += 2) {
@@ -691,7 +701,7 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.context.stroke();
 
       // Draw the headroom we are targeting.
-      if (!this.showGainCurve) {
+      if (!this.showGainCurve && !dashed) {
         const y = this.graphBottomLeft.y + this.viewScale.y * exp2(headroom!);
         this.context.setLineDash(LINE_DASH_PATTERN);
         this.context.beginPath();
@@ -702,9 +712,14 @@ export class CurveEditor extends Base2dGraphRenderer {
     }
     this.context.restore();
   }
-  drawInterpolatedCurve(headroom: number, color: string) {
-    if (!this.metadata) return;
-    const adaptation = agtmAdapt(this.metadata, headroom);
+  drawInterpolatedCurve(
+    headroom: number,
+    color: string,
+    metadata: AgtmMetadata | null = this.metadata,
+    dashed = false,
+  ) {
+    if (!metadata) return;
+    const adaptation = agtmAdapt(metadata, headroom);
     this.drawCurve(
       adaptation.altrI,
       adaptation.weightI,
@@ -712,6 +727,7 @@ export class CurveEditor extends Base2dGraphRenderer {
       adaptation.weightJ,
       headroom,
       color,
+      dashed,
     );
   }
 
@@ -830,6 +846,27 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.drawHistogram();
     this.drawIdentity();
     this.drawSelectedPixelLine();
+    if (this.unsmoothedMetadata) {
+      for (let i = 0; i < this.unsmoothedMetadata.altr.length; ++i) {
+        this.drawCurve(
+          this.unsmoothedMetadata.altr[i],
+          1.0,
+          null,
+          0.0,
+          null,
+          i == this.altrIndex ? '#FF8800' : '#B0B0B0',
+          /* dashed= */ true,
+        );
+      }
+      if (this.headroomLog2 != null) {
+        this.drawInterpolatedCurve(
+          this.headroomLog2,
+          '#0088FF',
+          this.unsmoothedMetadata,
+          /* dashed= */ true,
+        );
+      }
+    }
     if (this.metadata) {
       for (let i = 0; i < this.metadata.altr.length; ++i) {
         this.drawCurve(

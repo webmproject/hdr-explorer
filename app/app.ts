@@ -191,7 +191,7 @@ const rendererPanelInfos: Array<PanelInfo<Renderer>> = [
       const renderer = new AgtmRenderer(createCanvas('AgtmPreview'));
       setRendererZoomPan(renderer);
       setRendererHeadroom(renderer);
-      renderer.setMetadata(agtmMetadata);
+      renderer.setMetadata(unsmoothedAgtmMetadata ?? agtmMetadata);
       renderer.setShowClamped(showClampedToggle.checked);
       return renderer;
     },
@@ -476,6 +476,9 @@ const dynamicAgtmProgressEl = getHTMLElement('DynamicAgtmProgress');
 const pauseResumeDynamicAgtmButtonEl = getButtonElement(
   'PauseResumeDynamicAgtmButton',
 );
+const temporalSmoothingSelectEl = document.getElementById(
+  'TemporalSmoothing',
+) as HTMLSelectElement | null;
 const onlyNativeWarnings = Array.from(
   document.getElementsByClassName('warning-native'),
 ) as HTMLElement[];
@@ -529,15 +532,20 @@ const rendererPanels: Array<Panel<Renderer>> =
 const miscPanels: Array<Panel<Renderer>> = miscPanelInfos.map(createPanel);
 const allPanels: Array<Panel<Renderer>> = [...rendererPanels, ...miscPanels];
 
-function getRenderer<T extends Renderer>(
-  hashName: string,
-  rendererTypeConstructor: new (...args: never[]) => T,
-): T | null {
+function getPanel(hashName: string): Panel<Renderer> {
   const panel = allPanels.find((panel) => panel.hashName === hashName);
   if (!panel) {
     throw new Error(`Panel with hash name ${hashName} not found`);
   }
-  if (!panel.renderer) {
+  return panel;
+}
+
+function getRenderer<T extends Renderer>(
+  hashName: string,
+  rendererTypeConstructor: new (...args: never[]) => T,
+): T | null {
+  const panel = allPanels.find((p) => p.hashName === hashName);
+  if (!panel || !panel.renderer) {
     return null;
   }
   if (!(panel.renderer instanceof rendererTypeConstructor)) {
@@ -549,11 +557,7 @@ function getRenderer<T extends Renderer>(
 }
 
 function getPanelEl(hashName: string): HTMLElement {
-  const panel = allPanels.find((panel) => panel.hashName === hashName);
-  if (!panel) {
-    throw new Error(`Panel with hash name ${hashName} not found`);
-  }
-  return panel.panelEl;
+  return getPanel(hashName).panelEl;
 }
 
 let flipModeVisiblePanel: HTMLInputElement | null = null;
@@ -631,6 +635,20 @@ let customAgtmMetadataArray: Array<AgtmMetadata | null> | null = null;
 // Per-frame dynamic AGTM metadata and computed stats.
 let dynamicAgtmMetadata: Array<AgtmMetadata | null> | null = null;
 let dynamicAgtmComputedStats: Array<ComputedStats | null> | null = null;
+// Cache for temporally smoothed per-frame AGTM metadata, invalidated when the
+// underlying source array reference or its length (as frames are incrementally
+// computed) changes.
+interface SmoothedAgtmCache {
+  smoothedList: AgtmMetadata[];
+  sourceArray: Array<AgtmMetadata | null>;
+  sourceLength: number;
+}
+let smoothedAgtmCache: SmoothedAgtmCache | null = null;
+// Unsmoothed AGTM metadata for the current video frame when temporal smoothing
+// is active (while `agtmMetadata` holds the smoothed metadata). Used to keep
+// the main AGTM preview panel unsmoothed and to overlay the unsmoothed curve in
+// the curve editor.
+let unsmoothedAgtmMetadata: AgtmMetadata | null = null;
 
 // SMPTE 2094-40 metadata
 let hdr10pMetadata: Hdr10pMetadata | null = null;
@@ -972,59 +990,87 @@ async function setAgtmMetadata(
       agtmMetadata.baseline_hdr_headroom =
         baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
     }
-    originalAgtmMetadata = structuredClone(agtmMetadata);
     if (bestStats) {
       setStats(bestStats);
     }
-    if (gainApplicationSpacePrimariesOverridden) {
-      applyGainApplicationSpacePrimaries(agtmMetadata);
-    }
-    setComponentMixFunction();
+  } else {
+    const newAgtmMetadata = await getAgtmForType(
+      agtmMetadataType,
+      computedStats,
+      hdrReferenceWhite,
+      baselineHeadroomLinear,
+    );
+    if (!newAgtmMetadata) return;
+    agtmMetadata = newAgtmMetadata;
 
-    onMetadataChanged();
-    return;
+    // Have the panel fetch the SDR image data which might be different from the
+    // original SDR image.
+    if (
+      decodedMedia !== null &&
+      agtmMetadataType.startsWith('gain_map_') &&
+      agtmMetadata.base_image
+    ) {
+      console.log(
+        'Resetting the base image after computation of AGTM from gain map',
+      );
+      getRenderer('agtm', AgtmRenderer)?.setImage(
+        decodedMedia.imageBitmapSource,
+        agtmMetadata.base_image,
+        contentTransfer,
+        contentPrimaries,
+      );
+      getRenderer('agtm_lut', AgtmRenderer)?.setImage(
+        decodedMedia.imageBitmapSource,
+        agtmMetadata.base_image,
+        contentTransfer,
+        contentPrimaries,
+      );
+      getRenderer('smoothed', AgtmRenderer)?.setImage(
+        decodedMedia.imageBitmapSource,
+        agtmMetadata.base_image,
+        contentTransfer,
+        contentPrimaries,
+      );
+      // Discard the base image from the AGTM metadata to free up memory before
+      // the structuredClone below.
+      agtmMetadata.base_image = undefined;
+    }
   }
 
-  const newAgtmMetadata = await getAgtmForType(
-    agtmMetadataType,
-    computedStats,
-    hdrReferenceWhite,
-    baselineHeadroomLinear,
-  );
-  if (!newAgtmMetadata) return;
-  agtmMetadata = newAgtmMetadata;
-
-  // Have the panel fetch the SDR image data which might be different from the
-  // original SDR image.
-  if (
-    decodedMedia !== null &&
-    agtmMetadataType.startsWith('gain_map_') &&
-    agtmMetadata.base_image
-  ) {
-    console.log(
-      'Resetting the base image after computation of AGTM from gain map',
-    );
-    getRenderer('agtm', AgtmRenderer)?.setImage(
-      decodedMedia.imageBitmapSource,
-      agtmMetadata.base_image,
-      contentTransfer,
-      contentPrimaries,
-    );
-    getRenderer('agtm_lut', AgtmRenderer)?.setImage(
-      decodedMedia.imageBitmapSource,
-      agtmMetadata.base_image,
-      contentTransfer,
-      contentPrimaries,
-    );
-    // Discard the base image from the AGTM metadata to free up memory before
-    // the structuredClone below.
-    agtmMetadata.base_image = undefined;
+  unsmoothedAgtmMetadata = null;
+  if (decodedMedia?.type === 'video') {
+    const smoothedList = getSmoothedAgtmMetadataList();
+    if (smoothedList && smoothedList.length > 0) {
+      unsmoothedAgtmMetadata = agtmMetadata;
+      let frameIdx = 0;
+      if (decodedMedia.parsedMedia) {
+        const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
+        if (videoTrack) {
+          frameIdx =
+            findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
+        }
+      }
+      frameIdx = Math.min(frameIdx, smoothedList.length - 1);
+      agtmMetadata = structuredClone(
+        smoothedList[frameIdx] ?? kDefaultMetadata,
+      );
+      if (hdrReferenceWhite !== undefined) {
+        agtmMetadata.hdr_reference_white = hdrReferenceWhite;
+      }
+      if (baselineHeadroomLinear !== undefined) {
+        agtmMetadata.baseline_hdr_headroom =
+          baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
+      }
+    }
   }
 
   originalAgtmMetadata = structuredClone(agtmMetadata);
 
   if (gainApplicationSpacePrimariesOverridden) {
     applyGainApplicationSpacePrimaries(agtmMetadata);
+    if (unsmoothedAgtmMetadata) {
+      applyGainApplicationSpacePrimaries(unsmoothedAgtmMetadata);
+    }
   }
   setComponentMixFunction();
 
@@ -1146,6 +1192,9 @@ function setComponentMixFunction() {
       ? originalAgtmMetadata.altr[0].mix
       : kDefaultMetadata.altr[0].mix;
   applyOverrides(agtmMetadata, originalMix);
+  if (unsmoothedAgtmMetadata) {
+    applyOverrides(unsmoothedAgtmMetadata, originalMix);
+  }
 }
 
 function getPrimariesEnumOrMinusOne(metadata: AgtmMetadata) {
@@ -1176,16 +1225,32 @@ function onMetadataChanged() {
 
   getPanelEl('json').querySelector('textarea')!.value =
     metadataToJson(agtmMetadata);
+  getRenderer('curves', CurveEditor)?.setUnsmoothedMetadata(
+    unsmoothedAgtmMetadata,
+  );
+  getRenderer('smoothed', AgtmRenderer)?.setMetadata(agtmMetadata);
   getRenderer('curves', CurveEditor)?.setMetadata(agtmMetadata);
-  getRenderer('agtm', AgtmRenderer)?.setMetadata(agtmMetadata);
+  getRenderer('agtm', AgtmRenderer)?.setMetadata(
+    unsmoothedAgtmMetadata ?? agtmMetadata,
+  );
   getRenderer('agtm_lut', AgtmRenderer)?.setMetadata(agtmMetadata);
   getRenderer('luma', LumaRenderer)?.setMetadata(agtmMetadata);
   updateCurves3dRenderer();
+  ensureDynamicAgtmForTemporalPanels();
 }
 
-function ensureDynamicAgtmForCurves3d() {
-  const curves3dPanel = allPanels.find((p) => p.hashName === 'curves_3d');
-  if (!curves3dPanel?.toggle.checked) return;
+function ensureDynamicAgtmForTemporalPanels() {
+  const curves3dPanel = getPanel('curves_3d');
+  const agtmSmoothedPanel = allPanels.find((p) => p.hashName === 'smoothed');
+  if (
+    agtmSmoothedPanel?.toggle.checked &&
+    temporalSmoothingSelectEl?.value === 'none'
+  ) {
+    temporalSmoothingSelectEl.value = 'default';
+  }
+  if (!agtmSmoothedPanel?.toggle.checked && !curves3dPanel.toggle.checked) {
+    return;
+  }
   if (
     decodedMedia?.type === 'video' &&
     agtmMetadataType !== 'fromfile' &&
@@ -1201,7 +1266,7 @@ function updateCurves3dRenderer(renderer?: Curves3dRenderer) {
   const r = renderer ?? getRenderer('curves_3d', Curves3dRenderer);
   if (!r) return;
 
-  ensureDynamicAgtmForCurves3d();
+  ensureDynamicAgtmForTemporalPanels();
 
   let frameTimes: number[] = [0];
   let videoDuration = 0;
@@ -1252,7 +1317,13 @@ function updateCurves3dRenderer(renderer?: Curves3dRenderer) {
 
   const currentTime =
     decodedMedia?.type === 'video' ? myVideoEl.currentTime : 0;
-  r.setCurvesData(frameTimes, metadataList, currentTime, videoDuration);
+  r.setCurvesData(
+    frameTimes,
+    metadataList,
+    currentTime,
+    videoDuration,
+    getSmoothedAgtmMetadataList(),
+  );
 }
 
 function updateSaveAgtmButtons() {
@@ -1333,6 +1404,35 @@ function getEmbeddedAgtmMetadataList(): Array<AgtmMetadata | null> | null {
   cachedEmbeddedAgtmMedia = decodedMedia.parsedMedia;
   cachedEmbeddedAgtmList = metadataList;
   return metadataList;
+}
+
+function getSmoothedAgtmMetadataList(): AgtmMetadata[] | null {
+  const agtmSmoothedPanel = allPanels.find((p) => p.hashName === 'smoothed');
+  if (
+    temporalSmoothingSelectEl?.value !== 'default' &&
+    !agtmSmoothedPanel?.toggle.checked
+  ) {
+    return null;
+  }
+  let sourceArray: Array<AgtmMetadata | null> | null = null;
+  if (agtmMetadataType === 'fromfile') {
+    sourceArray = getEmbeddedAgtmMetadataList();
+  } else if (agtmMetadataType === 'custom') {
+    sourceArray = customAgtmMetadataArray;
+  } else {
+    sourceArray = dynamicAgtmMetadata;
+  }
+  if (!sourceArray || sourceArray.length === 0) {
+    return null;
+  }
+  if (
+    smoothedAgtmCache &&
+    smoothedAgtmCache.sourceArray === sourceArray &&
+    smoothedAgtmCache.sourceLength === sourceArray.length
+  ) {
+    return smoothedAgtmCache.smoothedList;
+  }
+  return null;
 }
 
 function hasEmbeddedAgtmMetadata(): boolean {
@@ -1627,6 +1727,9 @@ async function decodedMediaCallback(
 
   agtmMetadataType = metadataSelectEl.value as AgtmMetadataType | 'fromfile';
 
+  if (temporalSmoothingSelectEl) {
+    temporalSmoothingSelectEl.disabled = media.type !== 'video';
+  }
   dynamicAgtmEl.disabled = media.type !== 'video';
   if (media.type !== 'video' && dynamicAgtmEl.value !== 'off') {
     dynamicAgtmEl.value = 'off';
@@ -1830,6 +1933,8 @@ function resetMedia() {
   imageBitmapStats = null;
   computedStats = null;
   selectedPixelCoords = null;
+  smoothedAgtmCache = null;
+  unsmoothedAgtmMetadata = null;
   if (myVideoEl.src.startsWith('blob:')) {
     URL.revokeObjectURL(myVideoEl.src);
   }
@@ -2706,6 +2811,10 @@ async function saveDynamicAgtmJson() {
   if (!metadataArray && agtmMetadataType === 'fromfile') {
     metadataArray = getEmbeddedAgtmMetadataList();
   }
+  const smoothedJsonArray = getSmoothedAgtmMetadataList();
+  if (smoothedJsonArray) {
+    metadataArray = smoothedJsonArray;
+  }
 
   if (metadataArray) {
     downloadAgtmJson(metadataArray, 'all');
@@ -2753,6 +2862,10 @@ async function saveDynamicAgtmVideo() {
   let metadataArray = dynamicAgtmMetadata;
   if (!metadataArray && agtmMetadataType === 'fromfile') {
     metadataArray = getEmbeddedAgtmMetadataList();
+  }
+  const smoothedVideoArray = getSmoothedAgtmMetadataList();
+  if (smoothedVideoArray) {
+    metadataArray = smoothedVideoArray;
   }
 
   if (metadataArray) {
@@ -2944,8 +3057,7 @@ export function main() {
     const btn = button as HTMLButtonElement;
     const panelHashName = btn.dataset['panelHashName'];
     if (!panelHashName) return;
-    const panel = allPanels.find((p) => p.hashName === panelHashName);
-    if (!panel) return;
+    const panel = getPanel(panelHashName);
 
     btn.addEventListener('click', (e) => {
       const clickedRenderer = panel.renderer;
@@ -3237,6 +3349,12 @@ export function main() {
       await setAgtmMetadata();
       renderVisiblePanels();
     }
+  });
+
+  temporalSmoothingSelectEl?.addEventListener('change', async () => {
+    smoothedAgtmCache = null;
+    await setAgtmMetadata();
+    renderVisiblePanels();
   });
 
   const lutChangeHandler = () => {
@@ -3605,7 +3723,7 @@ export function main() {
 
   // Panel toggles
   for (const panel of rendererPanels) {
-    panel.toggle.addEventListener('change', () => {
+    panel.toggle.addEventListener('change', async () => {
       const updates: {[key: string]: string | null} = {};
       if (panel.toggle.checked === panel.defaultChecked) {
         updates[panel.hashName] = null;
@@ -3629,6 +3747,10 @@ export function main() {
       }
       // Update state and display.
       setHashes(updates);
+      if (panel.hashName === 'smoothed') {
+        ensureDynamicAgtmForTemporalPanels();
+        await setAgtmMetadata();
+      }
       update();
       renderVisiblePanels();
       scrollSyncer.syncVisiblePanels();
