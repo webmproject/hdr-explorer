@@ -196,6 +196,14 @@ export class DataStream {
     this.offset = p;
   }
 
+  getPosition(): number {
+    return this.offset;
+  }
+
+  seek(pos: number): void {
+    this.offset = pos;
+  }
+
   atEos(): boolean {
     return this.remaining <= 0;
   }

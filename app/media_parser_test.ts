@@ -15,11 +15,23 @@
  */
 
 import {
+  HdlrBox,
+  MetaBox,
+  parseIsobmff,
+  writeIsobmff,
+} from './isobmff';
+import {
+  DecodedMedia,
+  getMediaInfoString,
+} from './load_media';
+import {
   findSampleIndexForTime,
   findTrackSampleIndexForTime,
   getAverageFramerate,
   getCicp,
   getFirstVideoTrack,
+  getLastMp4ParseError,
+  getLastWebmParseError,
   isKeyframe,
   OBU,
   parseMp4,
@@ -116,10 +128,11 @@ describe('media_parser', () => {
       expect(parsed!.samples.length).toBe(0);
     });
 
-    it('returns null for corrupted buffer', () => {
-      const corrupted = new Uint8Array([0, 0, 0, 8, 102, 116, 121, 112]); // 'ftyp' with no moov
+    it('returns null and exposes error for corrupted buffer', () => {
+      const corrupted = new Uint8Array([0, 0, 0, 8, 102, 116, 121, 112]); // 'ftyp' with no content
       const parsed = parseMp4(corrupted.buffer);
       expect(parsed).toBeNull();
+      expect(getLastMp4ParseError()).not.toBeNull();
     });
 
     it('removes track correctly', async () => {
@@ -134,6 +147,21 @@ describe('media_parser', () => {
       removeTrack(parsed!, trackId);
       expect(parsed!.tracks[trackId]).toBeUndefined();
       expect(parsed!.hdrMetadata[trackId]).toBeUndefined();
+    });
+
+    it('returns null and exposes error for invalid box size', () => {
+      const buffer = new ArrayBuffer(16);
+      const view = new DataView(buffer);
+      view.setUint32(0, 1000);
+      view.setUint8(4, 'f'.charCodeAt(0));
+      view.setUint8(5, 't'.charCodeAt(0));
+      view.setUint8(6, 'y'.charCodeAt(0));
+      view.setUint8(7, 'p'.charCodeAt(0));
+      const parsed = parseMp4(buffer);
+      expect(parsed).toBeNull();
+      const err = getLastMp4ParseError();
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('Invalid box size');
     });
   });
 
@@ -176,15 +204,17 @@ describe('media_parser', () => {
       expect(parsed!.numKeyframes).toBeGreaterThan(0);
     });
 
-    it('returns null for empty buffer', () => {
+    it('returns null and exposes error for empty buffer', () => {
       const parsed = parseWebm(new ArrayBuffer(0));
       expect(parsed).toBeNull();
+      expect(getLastWebmParseError()).not.toBeNull();
     });
 
-    it('returns null for invalid buffer', () => {
+    it('returns null and exposes error for invalid buffer', () => {
       const corrupted = new Uint8Array([0xff, 0xff, 0xff, 0xff]);
       const parsed = parseWebm(corrupted.buffer);
       expect(parsed).toBeNull();
+      expect(getLastWebmParseError()).not.toBeNull();
     });
   });
 
@@ -250,6 +280,138 @@ describe('media_parser', () => {
         payload: null,
       } as unknown as OBU;
       expect(isKeyframe(obuOther)).toBeFalse();
+    });
+  });
+
+  describe('MetaBox', () => {
+    it('parses QTFF meta box without version and flags (isQtff = true)', () => {
+      // In QTFF, meta box content starts directly with child boxes.
+      const hdlrBox = new HdlrBox('hdlr');
+      hdlrBox.handlerType = 'mdir';
+      hdlrBox.name = 'appl';
+      hdlrBox.updateSize();
+
+      const metaBox = new MetaBox('meta');
+      metaBox.isQtff = true;
+      metaBox.children.push(hdlrBox);
+      metaBox.updateSize();
+
+      // Write to buffer and re-parse.
+      const buffer = writeIsobmff([metaBox]);
+      const parsedBoxes = parseIsobmff(buffer);
+
+      expect(parsedBoxes.length).toBe(1);
+      const parsedMeta = parsedBoxes[0] as MetaBox;
+      expect(parsedMeta instanceof MetaBox).toBeTrue();
+      expect(parsedMeta.isQtff).toBeTrue();
+      expect(parsedMeta.children.length).toBe(1);
+      const parsedHdlr = parsedMeta.children[0] as HdlrBox;
+      expect(parsedHdlr instanceof HdlrBox).toBeTrue();
+      expect(parsedHdlr.handlerType).toBe('mdir');
+      expect(parsedHdlr.name).toBe('appl');
+    });
+
+    it('parses MPEG-4 ISOBMFF meta box with version and flags (isQtff = false)', () => {
+      // In ISOBMFF, meta box has 4 bytes for version and flags before child boxes.
+      const hdlrBox = new HdlrBox('hdlr');
+      hdlrBox.handlerType = 'mdir';
+      hdlrBox.name = 'appl';
+      hdlrBox.updateSize();
+
+      const metaBox = new MetaBox('meta');
+      metaBox.isQtff = false;
+      metaBox.version = 0;
+      metaBox.flags = 0;
+      metaBox.children.push(hdlrBox);
+      metaBox.updateSize();
+
+      // Write to buffer and re-parse.
+      const buffer = writeIsobmff([metaBox]);
+      const parsedBoxes = parseIsobmff(buffer);
+
+      expect(parsedBoxes.length).toBe(1);
+      const parsedMeta = parsedBoxes[0] as MetaBox;
+      expect(parsedMeta instanceof MetaBox).toBeTrue();
+      expect(parsedMeta.isQtff).toBeFalse();
+      expect(parsedMeta.version).toBe(0);
+      expect(parsedMeta.flags).toBe(0);
+      expect(parsedMeta.children.length).toBe(1);
+      const parsedHdlr = parsedMeta.children[0] as HdlrBox;
+      expect(parsedHdlr instanceof HdlrBox).toBeTrue();
+      expect(parsedHdlr.handlerType).toBe('mdir');
+      expect(parsedHdlr.name).toBe('appl');
+    });
+
+    it('identifies QTFF meta box when first 32 bits of content are non-zero', () => {
+      const childType = 'hdlr';
+      // Construct a raw buffer: 8-byte meta header + child box header (33 bytes for hdlr)
+      const childSize = 33;
+      const totalSize = 8 + childSize;
+      const buffer = new ArrayBuffer(totalSize);
+      const view = new DataView(buffer);
+      // meta box header
+      view.setUint32(0, totalSize);
+      view.setUint8(4, 'm'.charCodeAt(0));
+      view.setUint8(5, 'e'.charCodeAt(0));
+      view.setUint8(6, 't'.charCodeAt(0));
+      view.setUint8(7, 'a'.charCodeAt(0));
+      // child box header
+      view.setUint32(8, childSize);
+      for (let i = 0; i < 4; i++) {
+        view.setUint8(12 + i, childType.charCodeAt(i));
+      }
+
+      const boxes = parseIsobmff(buffer);
+      expect(boxes.length).toBe(1);
+      const meta = boxes[0] as MetaBox;
+      expect(meta instanceof MetaBox).toBeTrue();
+      expect(meta.isQtff).toBeTrue();
+      expect(meta.children.length).toBe(1);
+      expect(meta.children[0].type).toBe(childType);
+    });
+  });
+
+  describe('getMediaInfoString', () => {
+    it('includes parseError when media parsing failed for video', () => {
+      const media: DecodedMedia = {
+        imageBitmap: {} as ImageBitmap,
+        type: 'video',
+        imageBitmapSource: {} as HTMLVideoElement,
+        metadata: null,
+        arrayBuffer: null,
+        parsedMedia: null,
+        parseError: "Failed to parse MP4 metadata: Invalid box size 1000 for box 'ftyp'",
+      };
+      const info = getMediaInfoString(media);
+      expect(info).toContain("Error: Failed to parse MP4 metadata: Invalid box size 1000 for box 'ftyp'");
+    });
+
+    it('includes parseError when media parsing failed for image', () => {
+      const media: DecodedMedia = {
+        imageBitmap: {} as ImageBitmap,
+        type: 'image',
+        imageBitmapSource: {} as HTMLImageElement,
+        metadata: null,
+        arrayBuffer: null,
+        parsedMedia: null,
+        parseError: "Failed to parse MP4 metadata: Invalid box size 1000 for box 'ftyp'",
+      };
+      const info = getMediaInfoString(media);
+      expect(info).toContain('Image File.');
+      expect(info).toContain("Error: Failed to parse MP4 metadata: Invalid box size 1000 for box 'ftyp'");
+    });
+
+    it('returns default message when no parsed media and no error', () => {
+      const media: DecodedMedia = {
+        imageBitmap: {} as ImageBitmap,
+        type: 'video',
+        imageBitmapSource: {} as HTMLVideoElement,
+        metadata: null,
+        arrayBuffer: null,
+        parsedMedia: null,
+      };
+      const info = getMediaInfoString(media);
+      expect(info).toBe('No parsed media info available.');
     });
   });
 });

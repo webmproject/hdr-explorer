@@ -2016,8 +2016,14 @@ export function removeTrack(mp4: ParsedMedia, trackId: number): void {
   }
 }
 
+let lastMp4ParseError: unknown = null;
+export function getLastMp4ParseError(): unknown {
+  return lastMp4ParseError;
+}
+
 export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMedia | null {
   try {
+    lastMp4ParseError = null;
     const mp4Parser = new MP4Parser(arrayBuffer);
     mp4Parser.parse();
     return {
@@ -2030,6 +2036,7 @@ export function parseMp4(arrayBuffer: ArrayBuffer): ParsedMedia | null {
       samples: mp4Parser.samples,
     };
   } catch (error: unknown) {
+    lastMp4ParseError = error;
     console.error('Error parsing MP4:', error);
     return null;
   }
@@ -2333,12 +2340,21 @@ class WebmParser {
   }
 }
 
+let lastWebmParseError: unknown = null;
+export function getLastWebmParseError(): unknown {
+  return lastWebmParseError;
+}
+
 export function parseWebm(arrayBuffer: ArrayBuffer): ParsedMedia | null {
   try {
+    lastWebmParseError = null;
     const webmParser = new WebmParser(arrayBuffer);
     webmParser.parse();
     const videoTrack = getFirstVideoTrack(webmParser.tracks);
-    if (!videoTrack) return null;
+    if (!videoTrack) {
+      lastWebmParseError = new Error('No video track found in WebM');
+      return null;
+    }
 
     return {
       containerType: 'webm',
@@ -2350,6 +2366,7 @@ export function parseWebm(arrayBuffer: ArrayBuffer): ParsedMedia | null {
       samples: webmParser.samples,
     };
   } catch (error: unknown) {
+    lastWebmParseError = error;
     console.error('Error parsing WebM:', error);
     return null;
   }

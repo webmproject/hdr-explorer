@@ -1639,6 +1639,10 @@ async function decodedMediaCallback(
   }
   decodedMedia = media;
 
+  if (isFirstFrame && media.parseError) {
+    showErrorToast(media.parseError);
+  }
+
   if (media.imageBitmapSource instanceof HTMLVideoElement) {
     const videoEl = media.imageBitmapSource;
     timeSliderEl.max = String(videoEl.duration);

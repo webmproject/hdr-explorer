@@ -23,6 +23,8 @@ import {
   getAgtmMetadata,
   getCicp,
   getFirstVideoTrack,
+  getLastMp4ParseError,
+  getLastWebmParseError,
   getSmpte209440Metadata,
   ParsedMedia,
   parseMp4,
@@ -45,6 +47,7 @@ export interface DecodedMedia {
   metadata: MediaMetadata | null;
   arrayBuffer: ArrayBuffer | null;
   parsedMedia: ParsedMedia | null;
+  parseError?: string | null;
 }
 
 export async function createImageBitmapSource(
@@ -59,6 +62,7 @@ async function onImageBitmapSource(
   metadata: MediaMetadata | null,
   arrayBuffer: ArrayBuffer | null,
   parsedMedia: ParsedMedia | null,
+  parseError: string | null,
   decodedMediaCallback: (media: DecodedMedia) => void,
 ) {
   const options: ImageBitmapOptions = {colorSpaceConversion: 'none'};
@@ -71,6 +75,7 @@ async function onImageBitmapSource(
     metadata,
     type,
     parsedMedia,
+    parseError,
   });
 }
 
@@ -80,6 +85,7 @@ function videoOnFrameCallback(
   videoEl: HTMLVideoElement,
   isVideoElOwnedByCaller: boolean,
   parsedMedia: ParsedMedia | null,
+  parseError: string | null,
   arrayBuffer: ArrayBuffer | null,
   decodedMediaCallback: (media: DecodedMedia) => void,
 ) {
@@ -92,6 +98,7 @@ function videoOnFrameCallback(
         videoEl,
         isVideoElOwnedByCaller,
         parsedMedia,
+        parseError,
         arrayBuffer,
         decodedMediaCallback,
       ),
@@ -107,6 +114,7 @@ function videoOnFrameCallback(
       metadata,
       arrayBuffer,
       parsedMedia,
+      parseError,
       decodedMediaCallback,
     );
   };
@@ -217,11 +225,21 @@ export async function decodeMediaWithCallback(
   }
 
   const isMatroska = extension === 'webm' || extension === 'mkv';
-  const parsedMedia = fileArrayBuffer
-    ? isMatroska
+  let parseError: string | null = null;
+  let parsedMedia: ParsedMedia | null = null;
+  if (fileArrayBuffer) {
+    parsedMedia = isMatroska
       ? parseWebm(fileArrayBuffer)
-      : parseMp4(fileArrayBuffer)
-    : null;
+      : parseMp4(fileArrayBuffer);
+    if (!parsedMedia) {
+      const err = isMatroska ? getLastWebmParseError() : getLastMp4ParseError();
+      const detail =
+        err instanceof Error ? err.message : err ? String(err) : '';
+      parseError = `Failed to parse ${isMatroska ? 'WebM' : 'MP4'} metadata${
+        detail ? `: ${detail}` : ''
+      }`;
+    }
+  }
   if (parsedMedia) {
     console.debug('Parsed Video:', parsedMedia);
   }
@@ -258,6 +276,7 @@ export async function decodeMediaWithCallback(
       metadata,
       fileArrayBuffer,
       parsedMedia,
+      parseError,
       decodedMediaCallback,
     );
   } else {
@@ -271,6 +290,7 @@ export async function decodeMediaWithCallback(
         myVideoEl,
         isVideoElOwnedByCaller,
         parsedMedia,
+        parseError,
         fileArrayBuffer,
         decodedMediaCallback,
       ),
@@ -306,6 +326,9 @@ export function getMediaInfoString(media: DecodedMedia): string {
   if (!media.parsedMedia) {
     if (media.type === 'image') {
       info += 'Image File.\n';
+      if (media.parseError) {
+        info += `Error: ${media.parseError}\n`;
+      }
       if (media.metadata) {
         if (media.metadata.colourPrimaries) {
           info += `Colour Primaries: ${media.metadata.colourPrimaries}\n`;
@@ -321,7 +344,9 @@ export function getMediaInfoString(media: DecodedMedia): string {
         }
       }
     } else {
-      info += 'No parsed media info available.';
+      info += media.parseError
+        ? `Error: ${media.parseError}\n`
+        : 'No parsed media info available.';
     }
     return info;
   }

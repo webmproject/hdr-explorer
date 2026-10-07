@@ -133,13 +133,22 @@ export class FullBox extends Box {
   version = 0;
   flags = 0;
 
-  override parseContent(stream: DataStream) {
+  parseFullHeader(stream: DataStream): void {
+    if (stream.remaining < 4) return;
     const vFlags = stream.readUint32();
     this.version = vFlags >> 24;
     this.flags = vFlags & 0x00ffffff;
   }
-  override writeContent(stream: DataStream): void {
+
+  writeFullHeader(stream: DataStream): void {
     stream.writeUint32((this.version << 24) | (this.flags & 0x00ffffff));
+  }
+
+  override parseContent(stream: DataStream) {
+    this.parseFullHeader(stream);
+  }
+  override writeContent(stream: DataStream): void {
+    this.writeFullHeader(stream);
   }
   override getContentSize(): number {
     return 4; // for version and flags
@@ -249,7 +258,59 @@ export class ContainerFullBox extends FullBox {
   }
 }
 
-export class MetaBox extends ContainerFullBox {}
+export class MetaBox extends ContainerFullBox {
+  isQtff = false;
+
+  override parseContent(stream: DataStream) {
+    const pos = stream.getPosition();
+
+    // In ISOBMFF, MetaBox starts with 32 bits of version and flags (or
+    // obsolete_full_box_fields in 9th ed), which must be equal to 0.
+    // In QTFF, MetaBox is a pure container box without these 32 bits; its
+    // content starts directly with the first child box, so the first 32 bits
+    // are the size of the first child box (> 0).
+    // See ISOBMFF 9th ed FDIS Section 8.11.1.3 Semantics Note 2:
+    // "When the first 32 bits of the content of the MetaBox are not equal to 0,
+    // a reader is suggested to treat the MetaBox as a container box that does
+    // not include obsolete_full_box_fields."
+    if (this.size > 8 && stream.remaining >= 4) {
+      const first32Bits = stream.readUint32();
+      if (first32Bits !== 0) {
+        this.isQtff = true;
+      }
+      stream.seek(pos);
+    }
+
+    if (!this.isQtff) this.parseFullHeader(stream);
+    this.parseDataBeforeChildren(stream);
+    while (stream.remaining) {
+      const child = parseBox(stream, this);
+      if (!child) return;
+      this.children.push(child);
+    }
+  }
+
+  override writeContent(stream: DataStream): void {
+    if (!this.isQtff) {
+      this.writeFullHeader(stream);
+    }
+    this.writeDataBeforeChildren(stream);
+    for (const child of this.children) {
+      writeBox(child, stream);
+    }
+  }
+
+  override getContentSize(): number {
+    let size = this.isQtff ? 0 : 4; // for version and flags
+    size += this.getContentSizeBeforeChildren();
+    for (const child of this.children) {
+      child.updateSize();
+      size += child.size;
+    }
+    return size;
+  }
+}
+
 export class MoovBox extends ContainerBox {}
 export class TrakBox extends ContainerBox {}
 export class MdiaBox extends ContainerBox {}
@@ -1469,6 +1530,11 @@ function parseBox(stream: DataStream, parentBox: Box | null): Box | null {
   }
   const box = new constructorFunc(type, size);
   const contentSize = size - headerSize;
+  if (contentSize < 0 || contentSize > stream.remaining) {
+    throw new Error(
+      `Invalid box size ${size} for box '${type}' (header size ${headerSize}, stream remaining ${stream.remaining}) in '${parentBox?.type ?? 'root'}'`,
+    );
+  }
   box.parseContent(stream.subStream(contentSize));
 
   return box;
