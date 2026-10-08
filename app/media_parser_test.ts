@@ -22,7 +22,9 @@ import {
 } from './isobmff';
 import {
   DecodedMedia,
+  decodeMedia,
   getMediaInfoString,
+  isImageFilename,
 } from './load_media';
 import {
   findSampleIndexForTime,
@@ -412,6 +414,57 @@ describe('media_parser', () => {
       };
       const info = getMediaInfoString(media);
       expect(info).toBe('No parsed media info available.');
+    });
+  });
+
+  describe('isImageFilename', () => {
+    it('identifies image filenames correctly', () => {
+      expect(isImageFilename('image.jpg')).toBeTrue();
+      expect(isImageFilename('image.jpeg')).toBeTrue();
+      expect(isImageFilename('image.PNG')).toBeTrue();
+      expect(isImageFilename('image.avif')).toBeTrue();
+      expect(isImageFilename('image.webp')).toBeTrue();
+      expect(isImageFilename('image.gif')).toBeTrue();
+      expect(isImageFilename('image.bmp')).toBeTrue();
+      expect(isImageFilename('image.heic')).toBeTrue();
+      expect(isImageFilename('image.heif')).toBeTrue();
+      expect(isImageFilename('video.mp4')).toBeFalse();
+      expect(isImageFilename('video.webm')).toBeFalse();
+      expect(isImageFilename('data.json')).toBeFalse();
+      expect(isImageFilename('no_ext')).toBeFalse();
+    });
+  });
+
+  describe('decodeMedia', () => {
+    it('defaults standard SDR images to sRGB transfer and primaries', async () => {
+      const response = await fetch('/data/sdr_bloat/livia-NEFZEwCTyb0-unsplash.jpg');
+      expect(response.ok).toBeTrue();
+      const blob = await response.blob();
+      const decoded = await decodeMedia('livia-NEFZEwCTyb0-unsplash.jpg', blob);
+      expect(decoded.type).toBe('image');
+      expect(decoded.metadata).not.toBeNull();
+      expect(decoded.metadata!.transferCharacteristics).toBe(13); // sRGB
+      expect(decoded.metadata!.colourPrimaries).toBe(1); // sRGB / BT.709
+    });
+
+    it('preserves signaled transfer and primaries for HDR images', async () => {
+      const response = await fetch('/data/pigeon-pq.avif');
+      expect(response.ok).toBeTrue();
+      const blob = await response.blob();
+      const decoded = await decodeMedia('pigeon-pq.avif', blob);
+      expect(decoded.type).toBe('image');
+      expect(decoded.metadata).not.toBeNull();
+      expect(decoded.metadata!.transferCharacteristics).toBe(16); // PQ
+      expect(decoded.metadata!.colourPrimaries).toBe(1); // BT.709
+
+      const response2020 = await fetch('/data/1px_pq_max.avif');
+      expect(response2020.ok).toBeTrue();
+      const blob2020 = await response2020.blob();
+      const decoded2020 = await decodeMedia('1px_pq_max.avif', blob2020);
+      expect(decoded2020.type).toBe('image');
+      expect(decoded2020.metadata).not.toBeNull();
+      expect(decoded2020.metadata!.transferCharacteristics).toBe(16); // PQ
+      expect(decoded2020.metadata!.colourPrimaries).toBe(9); // Rec. 2020
     });
   });
 });

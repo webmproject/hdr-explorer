@@ -17,6 +17,12 @@
 import {objectUrlFromSafeSource} from 'safevalues/dom';
 
 import {AgtmMetadata} from './color_helpers/agtm';
+import {
+  PRIMARIES_REC2020,
+  PRIMARIES_SRGB,
+  TRANSFER_PQ,
+  TRANSFER_SRGB,
+} from './color_helpers/color_functions';
 import {Hdr10pMetadata} from './color_helpers/hdr10p';
 import {getAgtmFromIcc, getIccFromPng} from './icc';
 import {
@@ -31,7 +37,7 @@ import {
   parseWebm,
 } from './media_parser';
 
-interface MediaMetadata {
+export interface MediaMetadata {
   transferCharacteristics: number;
   colourPrimaries: number;
   hdr10pMetadata: Hdr10pMetadata | null;
@@ -81,6 +87,24 @@ async function onImageBitmapSource(
 
 const videoFrameCallbackHandles = new WeakMap<HTMLVideoElement, number>();
 
+const DEFAULT_VIDEO_METADATA: MediaMetadata = {
+  transferCharacteristics: TRANSFER_PQ,
+  colourPrimaries: PRIMARIES_REC2020,
+  hdr10pMetadata: null,
+  hdr10pMetadataText: null,
+  agtmMetadata: null,
+  agtmMetadataText: null,
+};
+
+const DEFAULT_IMAGE_METADATA: MediaMetadata = {
+  transferCharacteristics: TRANSFER_SRGB,
+  colourPrimaries: PRIMARIES_SRGB,
+  hdr10pMetadata: null,
+  hdr10pMetadataText: null,
+  agtmMetadata: null,
+  agtmMetadataText: null,
+};
+
 function videoOnFrameCallback(
   videoEl: HTMLVideoElement,
   isVideoElOwnedByCaller: boolean,
@@ -106,9 +130,9 @@ function videoOnFrameCallback(
     if (isVideoElOwnedByCaller) {
       videoFrameCallbackHandles.set(videoEl, handle);
     }
-    const metadata = parsedMedia
-      ? readMetadata(parsedMedia, videoEl.currentTime)
-      : null;
+    const metadata: MediaMetadata = parsedMedia
+      ? readMetadata(parsedMedia, videoEl.currentTime, /* isImage= */ false)
+      : DEFAULT_VIDEO_METADATA;
     await onImageBitmapSource(
       videoEl,
       metadata,
@@ -152,19 +176,19 @@ function loadImage(
 function readMetadata(
   parsedMedia: ParsedMedia,
   videoTime: number,
+  isImage: boolean,
 ): MediaMetadata {
-  const metadata: MediaMetadata = {
-    transferCharacteristics: 0,
-    colourPrimaries: 0,
-    hdr10pMetadata: null,
-    hdr10pMetadataText: null,
-    agtmMetadata: null,
-    agtmMetadataText: null,
-  };
+  const metadata: MediaMetadata = isImage
+    ? DEFAULT_IMAGE_METADATA
+    : DEFAULT_VIDEO_METADATA;
   const cicp = getCicp(parsedMedia);
   if (cicp) {
-    metadata.transferCharacteristics = cicp.transferCharacteristics ?? 0;
-    metadata.colourPrimaries = cicp.colourPrimaries ?? 0;
+    if (cicp.transferCharacteristics) {
+      metadata.transferCharacteristics = cicp.transferCharacteristics;
+    }
+    if (cicp.colourPrimaries) {
+      metadata.colourPrimaries = cicp.colourPrimaries;
+    }
   }
   const hdr10pMetadata = getSmpte209440Metadata(parsedMedia, videoTime);
   const agtmMetadata = getAgtmMetadata(parsedMedia, videoTime);
@@ -177,6 +201,59 @@ function readMetadata(
     metadata.agtmMetadata = agtmMetadata;
   }
   return metadata;
+}
+
+export const IMAGE_EXTENSIONS = new Set([
+  'avif',
+  'png',
+  'jpg',
+  'jpeg',
+  'heic',
+  'heif',
+  'webp',
+  'gif',
+  'bmp',
+]);
+
+export function isImageFilename(filename: string): boolean {
+  const extension = filename.split('.').pop()?.toLowerCase();
+  return extension ? IMAGE_EXTENSIONS.has(extension) : false;
+}
+
+const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
+  'avif': 'image/avif',
+  'png': 'image/png',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'webp': 'image/webp',
+  'gif': 'image/gif',
+  'bmp': 'image/bmp',
+  'heic': 'image/heic',
+  'heif': 'image/heif',
+  'mp4': 'video/mp4',
+  'webm': 'video/webm',
+};
+
+/**
+ * Ensures the blob has a MIME type, if the filename is known.
+ * Useful for tests which would otherwise fail with
+ * 'Failed to decode media: Error: unsafe blob MIME type: null'.
+ */
+function ensureTypedBlob(blob: Blob, filename: string): Blob {
+  const extension = filename.split('.').pop()?.toLowerCase();
+  const knownMimeType = extension ? EXTENSION_TO_MIME_TYPE[extension] : null;
+  if (!knownMimeType) {
+    return blob;
+  }
+  if (
+    !blob.type ||
+    blob.type === 'null' ||
+    blob.type === 'application/octet-stream' ||
+    !blob.type.includes('/')
+  ) {
+    return new Blob([blob], {type: knownMimeType});
+  }
+  return blob;
 }
 
 /**
@@ -207,27 +284,20 @@ export async function decodeMediaWithCallback(
     }
   }
 
+  fileBlob = ensureTypedBlob(fileBlob, filename);
   const extension = filename.split('.').pop()?.toLowerCase();
-  const isImage =
-    extension === 'avif' ||
-    extension === 'png' ||
-    extension === 'jpg' ||
-    extension === 'jpeg' ||
-    extension === 'heic' ||
-    extension === 'heif';
+  const isImage = isImageFilename(filename);
 
   const url = objectUrlFromSafeSource(fileBlob);
 
   // ArrayBuffer used to decode metadata from videos or AVIF files..
-  let fileArrayBuffer: ArrayBuffer | null = null;
-  if (!isImage || (isImage && extension === 'avif')) {
-    fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
-  }
+  const fileArrayBuffer: ArrayBuffer = await readFileAsArrayBuffer(fileBlob);
 
   const isMatroska = extension === 'webm' || extension === 'mkv';
   let parseError: string | null = null;
   let parsedMedia: ParsedMedia | null = null;
-  if (fileArrayBuffer) {
+  // Parse the video container for videos and AVIF files.
+  if (!isImage || extension === 'avif') {
     parsedMedia = isMatroska
       ? parseWebm(fileArrayBuffer)
       : parseMp4(fileArrayBuffer);
@@ -246,29 +316,15 @@ export async function decodeMediaWithCallback(
 
   if (isImage) {
     const myImageEl = await loadImage(url, imageEl);
-    let metadata = parsedMedia ? readMetadata(parsedMedia, 0) : null;
-    if (extension === 'jpg' || extension === 'jpeg' || extension === 'png') {
-      fileArrayBuffer = await readFileAsArrayBuffer(fileBlob);
-      // Assume sRGB for JPEG and PNG.
-      // But ideally we should check if there is an ICC profile or a cICP chunk
-      // in the PNG.
-      metadata = {
-        transferCharacteristics: 13,
-        colourPrimaries: 1,
-        hdr10pMetadata: null,
-        hdr10pMetadataText: null,
-        agtmMetadata: null,
-        agtmMetadataText: null,
-      };
-      if (extension === 'png') {
-        const icc = getIccFromPng(new Uint8Array(fileArrayBuffer));
-        const agtm = icc ? getAgtmFromIcc(icc) : null;
-        console.log('Loaded AGTM from ICC: ', agtm);
-        if (agtm) {
-          metadata.agtmMetadata = agtm;
-        } else {
-          metadata = null; // No AGTM metadata in the ICC profile.
-        }
+    const metadata: MediaMetadata = parsedMedia
+      ? readMetadata(parsedMedia, 0, /* isImage= */ true)
+      : isImage ? DEFAULT_IMAGE_METADATA : DEFAULT_VIDEO_METADATA;
+    if (extension === 'png') {
+      const icc = getIccFromPng(new Uint8Array(fileArrayBuffer));
+      const agtm = icc ? getAgtmFromIcc(icc) : null;
+      console.log('Loaded AGTM from ICC: ', agtm);
+      if (agtm) {
+        metadata.agtmMetadata = agtm;
       }
     }
     await onImageBitmapSource(

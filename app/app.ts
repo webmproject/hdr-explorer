@@ -1963,12 +1963,6 @@ async function loadSelectedContent() {
   const optgroup = selectedOption.parentElement as HTMLOptGroupElement;
 
   resetMedia();
-  // Default tranfser/primaries. These get overridden in onFrameChanged() if
-  // we can parse them from the file.
-  contentTransfer = TRANSFER_PQ;
-  contentPrimaries = PRIMARIES_REC2020;
-  signalTransferEl.value = contentTransfer.toString();
-  signalPrimariesEl.value = contentPrimaries.toString();
 
   const pathPrefix = selectedOption.dataset['dirname'];
   const fullPath = pathPrefix ? `${pathPrefix}/${contentName}` : contentName;
