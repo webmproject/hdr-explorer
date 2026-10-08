@@ -87,23 +87,27 @@ async function onImageBitmapSource(
 
 const videoFrameCallbackHandles = new WeakMap<HTMLVideoElement, number>();
 
-const DEFAULT_VIDEO_METADATA: MediaMetadata = {
-  transferCharacteristics: TRANSFER_PQ,
-  colourPrimaries: PRIMARIES_REC2020,
-  hdr10pMetadata: null,
-  hdr10pMetadataText: null,
-  agtmMetadata: null,
-  agtmMetadataText: null,
-};
+function getDefaultVideoMetadata(): MediaMetadata {
+  return {
+    transferCharacteristics: TRANSFER_PQ,
+    colourPrimaries: PRIMARIES_REC2020,
+    hdr10pMetadata: null,
+    hdr10pMetadataText: null,
+    agtmMetadata: null,
+    agtmMetadataText: null,
+  };
+}
 
-const DEFAULT_IMAGE_METADATA: MediaMetadata = {
-  transferCharacteristics: TRANSFER_SRGB,
-  colourPrimaries: PRIMARIES_SRGB,
-  hdr10pMetadata: null,
-  hdr10pMetadataText: null,
-  agtmMetadata: null,
-  agtmMetadataText: null,
-};
+function getDefaultImageMetadata(): MediaMetadata {
+  return {
+    transferCharacteristics: TRANSFER_SRGB,
+    colourPrimaries: PRIMARIES_SRGB,
+    hdr10pMetadata: null,
+    hdr10pMetadataText: null,
+    agtmMetadata: null,
+    agtmMetadataText: null,
+  };
+}
 
 function videoOnFrameCallback(
   videoEl: HTMLVideoElement,
@@ -132,7 +136,7 @@ function videoOnFrameCallback(
     }
     const metadata: MediaMetadata = parsedMedia
       ? readMetadata(parsedMedia, videoEl.currentTime, /* isImage= */ false)
-      : DEFAULT_VIDEO_METADATA;
+      : getDefaultVideoMetadata();
     await onImageBitmapSource(
       videoEl,
       metadata,
@@ -179,8 +183,8 @@ function readMetadata(
   isImage: boolean,
 ): MediaMetadata {
   const metadata: MediaMetadata = isImage
-    ? DEFAULT_IMAGE_METADATA
-    : DEFAULT_VIDEO_METADATA;
+    ? getDefaultImageMetadata()
+    : getDefaultVideoMetadata();
   const cicp = getCicp(parsedMedia);
   if (cicp) {
     if (cicp.transferCharacteristics) {
@@ -318,7 +322,7 @@ export async function decodeMediaWithCallback(
     const myImageEl = await loadImage(url, imageEl);
     const metadata: MediaMetadata = parsedMedia
       ? readMetadata(parsedMedia, 0, /* isImage= */ true)
-      : isImage ? DEFAULT_IMAGE_METADATA : DEFAULT_VIDEO_METADATA;
+      : getDefaultImageMetadata();
     if (extension === 'png') {
       const icc = getIccFromPng(new Uint8Array(fileArrayBuffer));
       const agtm = icc ? getAgtmFromIcc(icc) : null;

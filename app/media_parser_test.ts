@@ -466,5 +466,24 @@ describe('media_parser', () => {
       expect(decoded2020.metadata!.transferCharacteristics).toBe(16); // PQ
       expect(decoded2020.metadata!.colourPrimaries).toBe(9); // Rec. 2020
     });
+
+    it('does not mutate default metadata across decodeMedia calls', async () => {
+      // Decode an HDR image first.
+      const hdrResponse = await fetch('/data/pigeon-pq.avif');
+      expect(hdrResponse.ok).toBeTrue();
+      const hdrBlob = await hdrResponse.blob();
+      const hdrDecoded = await decodeMedia('pigeon-pq.avif', hdrBlob);
+      expect(hdrDecoded.metadata!.transferCharacteristics).toBe(16);
+
+      // Decoding an SDR image afterwards must still default to sRGB (13 / 1).
+      const sdrResponse =
+          await fetch('/data/sdr_bloat/livia-NEFZEwCTyb0-unsplash.jpg');
+      expect(sdrResponse.ok).toBeTrue();
+      const sdrBlob = await sdrResponse.blob();
+      const sdrDecoded =
+          await decodeMedia('livia-NEFZEwCTyb0-unsplash.jpg', sdrBlob);
+      expect(sdrDecoded.metadata!.transferCharacteristics).toBe(13);
+      expect(sdrDecoded.metadata!.colourPrimaries).toBe(1);
+    });
   });
 });
