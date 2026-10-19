@@ -64,7 +64,9 @@ import {
   getAverageFramerate,
   getFirstVideoTrack,
   getSmpte209440Metadata,
+  ParsedMedia,
 } from './media_parser';
+import {decodeTrackWithWebCodecs} from './video_decoder';
 import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
@@ -788,19 +790,31 @@ function needsFrameStats(
 }
 
 async function computeFrameStats(
-  frame: HTMLVideoElement | HTMLImageElement,
+  frame: HTMLVideoElement | HTMLImageElement | VideoFrame,
   fullRange = false,
 ): Promise<ComputedStats | null> {
   try {
-    const bitmap = await createImageBitmapSource(frame);
-    const stats = new ImageStats(bitmap, contentTransfer, contentPrimaries);
+    let source: ImageBitmap | VideoFrame;
+    if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+      source = frame;
+    } else {
+      source = await createImageBitmapSource(
+        frame as HTMLVideoElement | HTMLImageElement,
+      );
+    }
+    const stats = new ImageStats(source, contentTransfer, contentPrimaries, {
+      keepEncoded: false,
+      useScratchBuffer: true,
+    });
     const computed = getStatsForAgtm(
       agtmMetadataType,
       stats,
       contentTransfer,
       fullRange,
     );
-    bitmap.close();
+    if (source !== frame) {
+      (source as ImageBitmap).close();
+    }
     return computed;
   } catch (e) {
     console.error('Failed to get stats for frame', e);
@@ -2454,77 +2468,36 @@ function handleSaveAnimation(renderers: Renderer[]) {
   }
 }
 
-async function generateDynamicMetadata(
-  abortController: AbortController,
-  progressCallback?: (frame: number, total: number) => void,
+function createDynamicMetadataProcessor(
+  parsedMp4: ParsedMedia,
+  framesToProcess: number,
+  sourceName: 'WebCodecs' | 'VideoSeek',
   frameComputedCallback?: (
     metadata: AgtmMetadata | null,
     stats: ComputedStats | null,
     time: number,
   ) => void,
-): Promise<Array<AgtmMetadata | null> | null> {
-  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMedia) {
-    return null;
-  }
-  const kMaxFramesToProcess = 1000;
+) {
   const metadataList: Array<AgtmMetadata | null> = [];
+  let averagedStats: ComputedStats | null = null;
+  const requiresStats = needsFrameStats(agtmMetadataType);
 
-  const parsedMp4 = decodedMedia.parsedMedia;
-  const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
-  if (!videoTrack || !videoTrack.timescale) {
-    showErrorToast('No video track with timescale found');
-    return null;
-  }
-  const numFrames = videoTrack.samples.length;
-  const framesToProcess = Math.min(kMaxFramesToProcess, numFrames);
-
-  const tempVideo = document.createElement('video');
-  exportProgressVideoEl = tempVideo;
-  tempVideo.style.width = '50px';
-  tempVideo.style.margin = '5px ';
-  tempVideo.style.display = activeDynamicExportsCount > 0 ? '' : 'none';
-  saveDynamicAgtmButtonEl.parentElement!.appendChild(tempVideo);
-  const videoUrl = objectUrlFromSafeSource(mediaBlob);
-  tempVideo.src = videoUrl.toString();
-
-  try {
-    await new Promise((resolve) => {
-      tempVideo.onloadedmetadata = resolve;
-    });
-
-    let averagedStats: ComputedStats | null = null;
-    const requiresStats = needsFrameStats(agtmMetadataType);
-
-    for (let i = 0; i < framesToProcess; i++) {
-      if (isDynamicAgtmPaused) {
-        await new Promise<void>((resolve) => {
-          dynamicAgtmPauseResolver = resolve;
-        });
-      }
-      if (abortController.signal.aborted) {
-        return null;
-      }
-      if (progressCallback) {
-        progressCallback(i, framesToProcess);
-      }
-
-      const sample = videoTrack.samplesSortedByPresentationTime[i];
-      const time = sample.presentationTimeSec;
-
+  return {
+    metadataList,
+    processFrame: async (
+      frame: VideoFrame | HTMLVideoElement,
+      i: number,
+      time: number,
+    ): Promise<boolean> => {
       if (requiresStats) {
-        await new Promise<void>((resolve) => {
-          tempVideo.onseeked = () => {
-            resolve();
-          };
-          tempVideo.currentTime = time;
-        });
-
-        const computed = await computeFrameStats(
-          tempVideo,
-          /*fullRange=*/ true,
-        );
+        const computed = await computeFrameStats(frame, /*fullRange=*/ true);
         if (!computed) {
-          return [];
+          if (i === 0 && sourceName === 'WebCodecs') {
+            throw new Error(
+              'computeFrameStats returned null on frame 0 with VideoFrame',
+            );
+          }
+          return false;
         }
         if (!averagedStats) {
           averagedStats = computed;
@@ -2572,8 +2545,158 @@ async function generateDynamicMetadata(
           frameComputedCallback(metadata, averagedStats, time);
         }
       }
+      return true;
+    },
+  };
+}
+
+async function generateDynamicMetadata(
+  abortController: AbortController,
+  progressCallback?: (frame: number, total: number) => void,
+  frameComputedCallback?: (
+    metadata: AgtmMetadata | null,
+    stats: ComputedStats | null,
+    time: number,
+  ) => void,
+): Promise<Array<AgtmMetadata | null> | null> {
+  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMedia) {
+    return null;
+  }
+  const kMaxFramesToProcess = 1000;
+  const parsedMp4 = decodedMedia.parsedMedia;
+  const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
+  if (!videoTrack || !videoTrack.timescale) {
+    showErrorToast('No video track with timescale found');
+    return null;
+  }
+  const numFrames = videoTrack.samples.length;
+  const framesToProcess = Math.min(kMaxFramesToProcess, numFrames);
+
+  // Try WebCodecs first, since it's much faster.
+  try {
+    const processor = createDynamicMetadataProcessor(
+      parsedMp4,
+      framesToProcess,
+      'WebCodecs',
+      frameComputedCallback,
+    );
+
+    const handled = await decodeTrackWithWebCodecs(videoTrack, {
+      framesToProcess,
+      abortSignal: abortController.signal,
+      pauseCheck: async () => {
+        if (isDynamicAgtmPaused) {
+          await new Promise<void>((resolve) => {
+            dynamicAgtmPauseResolver = resolve;
+          });
+        }
+      },
+      onProgress: progressCallback,
+      onFrame: async (videoFrame, i, time) => {
+        await processor.processFrame(videoFrame, i, time);
+      },
+    });
+
+    if (handled) {
+      return processor.metadataList;
     }
-    return metadataList;
+    if (abortController.signal.aborted) {
+      return null;
+    }
+  } catch (e) {
+    if (abortController.signal.aborted) {
+      return null;
+    }
+    console.warn(
+      'WebCodecs video decoding failed or unsupported; falling back to video element seeking:',
+      e,
+    );
+  }
+
+  // Fallback to video seeking
+  return generateDynamicMetadataWithVideo(
+    abortController,
+    progressCallback,
+    frameComputedCallback,
+  );
+}
+
+async function generateDynamicMetadataWithVideo(
+  abortController: AbortController,
+  progressCallback?: (frame: number, total: number) => void,
+  frameComputedCallback?: (
+    metadata: AgtmMetadata | null,
+    stats: ComputedStats | null,
+    time: number,
+  ) => void,
+): Promise<Array<AgtmMetadata | null> | null> {
+  if (!decodedMedia?.arrayBuffer || !mediaBlob || !decodedMedia?.parsedMedia) {
+    return null;
+  }
+  const kMaxFramesToProcess = 1000;
+
+  const parsedMp4 = decodedMedia.parsedMedia;
+  const videoTrack = getFirstVideoTrack(parsedMp4.tracks);
+  if (!videoTrack || !videoTrack.timescale) {
+    showErrorToast('No video track with timescale found');
+    return null;
+  }
+  const numFrames = videoTrack.samples.length;
+  const framesToProcess = Math.min(kMaxFramesToProcess, numFrames);
+
+  const tempVideo = document.createElement('video');
+  exportProgressVideoEl = tempVideo;
+  tempVideo.style.width = '50px';
+  tempVideo.style.margin = '5px ';
+  tempVideo.style.display = activeDynamicExportsCount > 0 ? '' : 'none';
+  saveDynamicAgtmButtonEl.parentElement!.appendChild(tempVideo);
+  const videoUrl = objectUrlFromSafeSource(mediaBlob);
+  tempVideo.src = videoUrl.toString();
+
+  try {
+    await new Promise((resolve) => {
+      tempVideo.onloadedmetadata = resolve;
+    });
+
+    const processor = createDynamicMetadataProcessor(
+      parsedMp4,
+      framesToProcess,
+      'VideoSeek',
+      frameComputedCallback,
+    );
+
+    for (let i = 0; i < framesToProcess; i++) {
+      if (isDynamicAgtmPaused) {
+        await new Promise<void>((resolve) => {
+          dynamicAgtmPauseResolver = resolve;
+        });
+      }
+      if (abortController.signal.aborted) {
+        return null;
+      }
+      if (progressCallback) {
+        progressCallback(i, framesToProcess);
+      }
+
+      const sample = videoTrack.samplesSortedByPresentationTime[i];
+      const time = sample.presentationTimeSec;
+
+      if (needsFrameStats(agtmMetadataType)) {
+        const tSeekStart = performance.now();
+        await new Promise<void>((resolve) => {
+          tempVideo.onseeked = () => {
+            resolve();
+          };
+          tempVideo.currentTime = time;
+        });
+      }
+
+      const success = await processor.processFrame(tempVideo, i, time);
+      if (!success) {
+        return [];
+      }
+    }
+    return processor.metadataList;
   } finally {
     tempVideo.remove();
     exportProgressVideoEl = null;
@@ -2618,6 +2741,7 @@ async function computeDynamicAgtmMetadata() {
   try {
     dynamicAgtmMetadata = [];
     dynamicAgtmComputedStats = [];
+    let lastRenderTime = 0;
     const metadataList = await generateDynamicMetadata(
       dynamicAgtmController,
       (frame, total) => {
@@ -2636,8 +2760,12 @@ async function computeDynamicAgtmMetadata() {
         dynamicAgtmComputedStats.push(stats);
         const percent = (time / myVideoEl.duration) * 100;
         timeSliderEl.style.background = `linear-gradient(to right, #28a745 0%, #28a745 ${percent}%, #dee2e6 ${percent}%, #dee2e6 100%)`;
-        void setAgtmMetadata();
-        renderVisiblePanels();
+        const now = performance.now();
+        if (now - lastRenderTime > 100) {
+          lastRenderTime = now;
+          void setAgtmMetadata();
+          renderVisiblePanels();
+        }
       },
     );
     updateSaveAgtmButtons();
