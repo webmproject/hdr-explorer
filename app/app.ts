@@ -903,6 +903,18 @@ function getHdr10pForTime(time: number): Hdr10pMetadata | null {
   return hdr10pMetadata;
 }
 
+function getCurrentVideoFrameIndex(): number {
+  if (decodedMedia?.parsedMedia) {
+    const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
+    if (videoTrack) {
+      return (
+        findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0
+      );
+    }
+  }
+  return 0;
+}
+
 function getCustomAgtmMetadata(
   hdrReferenceWhite?: number,
   baselineHeadroomLinear?: number,
@@ -910,13 +922,10 @@ function getCustomAgtmMetadata(
   let bestMeta: AgtmMetadata | null = null;
   if (customAgtmMetadataArray) {
     if (decodedMedia?.type === 'video' && decodedMedia.parsedMedia) {
-      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
-      let frameIdx = 0;
-      if (videoTrack) {
-        frameIdx =
-          findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
-      }
-      frameIdx = Math.min(frameIdx, customAgtmMetadataArray.length - 1);
+      const frameIdx = Math.min(
+        getCurrentVideoFrameIndex(),
+        customAgtmMetadataArray.length - 1,
+      );
       for (let i = frameIdx; i >= 0; --i) {
         if (customAgtmMetadataArray[i]) {
           bestMeta = customAgtmMetadataArray[i];
@@ -983,6 +992,42 @@ async function getAgtmForType(
   );
 }
 
+function getPrecomputedDynamicAgtmForTime(): {
+  metadata: AgtmMetadata;
+  stats: ComputedStats | null;
+} {
+  let bestMeta: AgtmMetadata | null = null;
+  let bestStats: ComputedStats | null = null;
+  if (dynamicAgtmMetadata) {
+    const frameIdx = Math.min(
+      getCurrentVideoFrameIndex(),
+      dynamicAgtmMetadata.length - 1,
+    );
+    for (let i = frameIdx; i >= 0; --i) {
+      if (dynamicAgtmMetadata[i]) {
+        bestMeta = dynamicAgtmMetadata[i];
+        if (dynamicAgtmComputedStats && dynamicAgtmComputedStats[i]) {
+          bestStats = dynamicAgtmComputedStats[i];
+        }
+        break;
+      }
+    }
+    if (!bestMeta) {
+      const idx = dynamicAgtmMetadata.findIndex((m) => m !== null);
+      if (idx !== -1) {
+        bestMeta = dynamicAgtmMetadata[idx];
+        if (dynamicAgtmComputedStats && dynamicAgtmComputedStats[idx]) {
+          bestStats = dynamicAgtmComputedStats[idx];
+        }
+      }
+    }
+  }
+  return {
+    metadata: structuredClone(bestMeta ?? kDefaultMetadata),
+    stats: bestStats,
+  };
+}
+
 /**
  * Adapts the AGTM metadata if the image is set and the toggle is enabled. This
  * will also update the imageBitmapStats and computedStats if they are not
@@ -1022,36 +1067,8 @@ async function setAgtmMetadata(
     dynamicAgtmMetadata &&
     decodedMedia?.type === 'video'
   ) {
-    let bestMeta: AgtmMetadata | null = null;
-    let bestStats: ComputedStats | null = null;
-    if (decodedMedia?.parsedMedia) {
-      const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
-      let frameIdx = 0;
-      if (videoTrack) {
-        frameIdx =
-          findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
-      }
-      frameIdx = Math.min(frameIdx, dynamicAgtmMetadata.length - 1);
-      for (let i = frameIdx; i >= 0; --i) {
-        if (dynamicAgtmMetadata[i]) {
-          bestMeta = dynamicAgtmMetadata[i];
-          if (dynamicAgtmComputedStats && dynamicAgtmComputedStats[i]) {
-            bestStats = dynamicAgtmComputedStats[i];
-          }
-          break;
-        }
-      }
-    }
-    if (!bestMeta) {
-      const idx = dynamicAgtmMetadata.findIndex((m) => m !== null);
-      if (idx !== -1) {
-        bestMeta = dynamicAgtmMetadata[idx];
-        if (dynamicAgtmComputedStats && dynamicAgtmComputedStats[idx]) {
-          bestStats = dynamicAgtmComputedStats[idx];
-        }
-      }
-    }
-    agtmMetadata = structuredClone(bestMeta ?? kDefaultMetadata);
+    const dynamicEntry = getPrecomputedDynamicAgtmForTime();
+    agtmMetadata = dynamicEntry.metadata;
     if (hdrReferenceWhite !== undefined) {
       agtmMetadata.hdr_reference_white = hdrReferenceWhite;
     }
@@ -1059,8 +1076,8 @@ async function setAgtmMetadata(
       agtmMetadata.baseline_hdr_headroom =
         baselineHeadroomLinear > 0 ? Math.log2(baselineHeadroomLinear) : 0;
     }
-    if (bestStats) {
-      setStats(bestStats);
+    if (dynamicEntry.stats) {
+      setStats(dynamicEntry.stats);
     }
   } else {
     const statsForAgtm =
@@ -1115,15 +1132,10 @@ async function setAgtmMetadata(
     const smoothedList = getSmoothedAgtmMetadataList();
     if (smoothedList && smoothedList.length > 0) {
       unsmoothedAgtmMetadata = agtmMetadata;
-      let frameIdx = 0;
-      if (decodedMedia.parsedMedia) {
-        const videoTrack = getFirstVideoTrack(decodedMedia.parsedMedia.tracks);
-        if (videoTrack) {
-          frameIdx =
-            findTrackSampleIndexForTime(videoTrack, myVideoEl.currentTime) ?? 0;
-        }
-      }
-      frameIdx = Math.min(frameIdx, smoothedList.length - 1);
+      const frameIdx = Math.min(
+        getCurrentVideoFrameIndex(),
+        smoothedList.length - 1,
+      );
       agtmMetadata = structuredClone(
         smoothedList[frameIdx] ?? kDefaultMetadata,
       );
@@ -1703,19 +1715,11 @@ function updateRenderersImage() {
   }
 }
 
-async function decodedMediaCallback(
-  media: DecodedMedia,
-  isUploadedFile: boolean,
-  isFirstFrame: boolean,
-) {
+async function onVideoFramePresented(media: DecodedMedia) {
   if (decodedMedia) {
     decodedMedia.imageBitmap.close();
   }
   decodedMedia = media;
-
-  if (isFirstFrame && media.parseError) {
-    showErrorToast(media.parseError);
-  }
 
   if (media.imageBitmapSource instanceof HTMLVideoElement) {
     const videoEl = media.imageBitmapSource;
@@ -1732,28 +1736,51 @@ async function decodedMediaCallback(
     );
   }
 
-  if (!isFirstFrame) {
-    if (media.metadata?.hdr10pMetadata) {
-      const smpte209440El = getPanelEl('smpte209440') as HTMLTextAreaElement;
-      if (smpte209440El) {
-        smpte209440El.value =
-          media.metadata.hdr10pMetadataText ?? '(No input video)';
-      }
-      hdr10pMetadata = media.metadata.hdr10pMetadata;
-      getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
-      getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+  if (media.metadata?.hdr10pMetadata) {
+    const smpte209440El = getPanelEl('smpte209440') as HTMLTextAreaElement;
+    if (smpte209440El) {
+      smpte209440El.value =
+        media.metadata.hdr10pMetadataText ?? '(No input video)';
     }
+    hdr10pMetadata = media.metadata.hdr10pMetadata;
+    getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+    getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+  }
 
-    if (
-      (dynamicAgtmEl.value === 'all' && dynamicAgtmMetadata) ||
-      (agtmMetadataType === 'fromfile' && media.metadata?.agtmMetadata)
-    ) {
-      await setAgtmMetadata();
-    }
+  if (
+    (dynamicAgtmEl.value === 'all' && dynamicAgtmMetadata) ||
+    (agtmMetadataType === 'fromfile' && media.metadata?.agtmMetadata)
+  ) {
+    await setAgtmMetadata();
+  }
 
-    updateRenderersImage();
-    renderVisiblePanels();
-    return;
+  updateRenderersImage();
+  renderVisiblePanels();
+}
+
+async function onMediaLoaded(media: DecodedMedia, isUploadedFile: boolean) {
+  if (decodedMedia) {
+    decodedMedia.imageBitmap.close();
+  }
+  decodedMedia = media;
+
+  if (media.parseError) {
+    showErrorToast(media.parseError);
+  }
+
+  if (media.imageBitmapSource instanceof HTMLVideoElement) {
+    const videoEl = media.imageBitmapSource;
+    timeSliderEl.max = String(videoEl.duration);
+    timeSliderValueEl.max = String(videoEl.duration);
+    timeSliderEl.value = videoEl.currentTime.toString();
+    timeSliderValueEl.value = Number(timeSliderEl.value).toLocaleString(
+      'fullwide',
+      {
+        minimumFractionDigits: 3,
+        maximumFractionDigits: 3,
+        minimumIntegerDigits: 3,
+      },
+    );
   }
 
   if (media.metadata?.transferCharacteristics && !hasHash('tf')) {
@@ -1774,7 +1801,7 @@ async function decodedMediaCallback(
   getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
 
   getHTMLElement('MediaInfoText').textContent = getMediaInfoString(media);
-  if (isUploadedFile && isFirstFrame) {
+  if (isUploadedFile) {
     mediaInfoDialogEl.showModal();
   }
 
@@ -1797,7 +1824,7 @@ async function decodedMediaCallback(
   }
 
   // Default to metadata type 'fromfile' when loading a new file with AGTM metadata.
-  if (isFirstFrame && hasAgtm && metadataSelectEl.value !== 'fromfile') {
+  if (hasAgtm && metadataSelectEl.value !== 'fromfile') {
     metadataSelectEl.value = 'fromfile';
     setHash('m', metadataSelectEl.value);
   }
@@ -1864,8 +1891,12 @@ async function onFile(name: string, f: Blob, isUploadedFile: boolean = false) {
   try {
     let isFirstCallback = true;
     const callbackWrapper = async (media: DecodedMedia) => {
-      await decodedMediaCallback(media, isUploadedFile, isFirstCallback);
-      isFirstCallback = false;
+      if (isFirstCallback) {
+        isFirstCallback = false;
+        await onMediaLoaded(media, isUploadedFile);
+      } else {
+        await onVideoFramePresented(media);
+      }
     };
 
     await decodeMediaWithCallback(
@@ -3703,16 +3734,7 @@ export function main() {
       }
     }
   };
-  myVideoEl.addEventListener('pause', async () => {
-    updateTimeHash();
-    if (dynamicAgtmEl.value === 'seek') {
-      await recomputeAgtmForCurrentFrame();
-    } else if (needsFrameStats(agtmMetadataType)) {
-      await updateCurrentFrameStatsAndPixel();
-      renderVisiblePanels();
-    }
-  });
-  myVideoEl.addEventListener('seeked', async () => {
+  const handleVideoSeekOrPause = async () => {
     updateTimeHash();
     if (dynamicAgtmEl.value === 'all' && dynamicAgtmMetadata) {
       await setAgtmMetadata();
@@ -3727,7 +3749,9 @@ export function main() {
       await updateCurrentFrameStatsAndPixel();
     }
     renderVisiblePanels();
-  });
+  };
+  myVideoEl.addEventListener('pause', handleVideoSeekOrPause);
+  myVideoEl.addEventListener('seeked', handleVideoSeekOrPause);
 
   myVideoEl.addEventListener('loadedmetadata', () => {
     const time = getHash('t');
