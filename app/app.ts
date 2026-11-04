@@ -509,6 +509,62 @@ const closeMediaInfoDialogEl = getButtonElement('CloseMediaInfoDialog');
 const errorToastEl = getHTMLElement('ErrorToast');
 const errorToastMessageEl = getHTMLElement('ErrorToastMessage');
 const closeErrorToastEl = getButtonElement('CloseErrorToast');
+const loadingIndicatorEl = getHTMLElement('LoadingIndicator');
+const loadingMessageEl = getHTMLElement('LoadingMessage');
+const loadingProgressBarEl = getHTMLElement('LoadingProgressBar');
+
+let currentLoadingFilename: string | null = null;
+
+function showLoadingIndicator(filename: string, message?: string) {
+  currentLoadingFilename = filename;
+  const basename = filename.split('/').pop() ?? filename;
+  loadingMessageEl.textContent = message ?? `Loading ${basename}...`;
+  loadingProgressBarEl.classList.remove('indeterminate');
+  loadingProgressBarEl.style.width = '0%';
+  loadingIndicatorEl.hidden = false;
+}
+
+function updateLoadingProgress(
+  filename: string,
+  loadedBytes: number,
+  totalBytes: number | null,
+) {
+  if (currentLoadingFilename !== filename) {
+    return;
+  }
+  const basename = filename.split('/').pop() ?? filename;
+  if (totalBytes && totalBytes > 0) {
+    const percent = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
+    loadingProgressBarEl.classList.remove('indeterminate');
+    loadingProgressBarEl.style.width = `${percent}%`;
+    const loadedMb = (loadedBytes / (1024 * 1024)).toFixed(1);
+    const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+    loadingMessageEl.textContent = `Loading ${basename} (${loadedMb} / ${totalMb} MB, ${percent}%)`;
+  } else {
+    loadingProgressBarEl.classList.add('indeterminate');
+    const loadedMb = (loadedBytes / (1024 * 1024)).toFixed(1);
+    loadingMessageEl.textContent = `Loading ${basename} (${loadedMb} MB)...`;
+  }
+}
+
+function updateLoadingDecoding(filename: string) {
+  if (currentLoadingFilename !== filename) {
+    return;
+  }
+  const basename = filename.split('/').pop() ?? filename;
+  loadingMessageEl.textContent = `Decoding ${basename}...`;
+  loadingProgressBarEl.classList.add('indeterminate');
+}
+
+function hideLoadingIndicator(filename?: string) {
+  if (filename && currentLoadingFilename !== filename) {
+    return;
+  }
+  loadingIndicatorEl.hidden = true;
+  loadingProgressBarEl.classList.remove('indeterminate');
+  loadingProgressBarEl.style.width = '0%';
+  currentLoadingFilename = null;
+}
 
 function snakeToPascal(s: string): string {
   return s
@@ -1878,6 +1934,7 @@ async function onMediaLoaded(media: DecodedMedia, isUploadedFile: boolean) {
   updateSaveAgtmButtons();
   updateRenderersImage();
   renderVisiblePanels();
+  hideLoadingIndicator();
 
   // Signal that the app finished loading (useful for tests).
   if (!(window as any)['appReady']) {
@@ -1909,6 +1966,7 @@ async function onFile(name: string, f: Blob, isUploadedFile: boolean = false) {
     mediaFilename = name;
     mediaBlob = f;
   } catch (error) {
+    hideLoadingIndicator();
     showErrorToast(error, 'Error decoding media:');
   }
 }
@@ -1944,6 +2002,7 @@ async function onFileList(files: FileList | null) {
     return;
   }
   unsetHash('t'); // Reset the time slider.
+  showLoadingIndicator(f.name, `Decoding ${f.name}...`);
   await onFile(f.name, f, /* isUploadedFile= */ true);
 }
 
@@ -1960,17 +2019,56 @@ async function fetchFile(filename: string) {
   currentMediaFetchController = new AbortController();
   controller = currentMediaFetchController;
 
+  showLoadingIndicator(filename);
+
   const myRequest = new Request(filename);
   try {
     const response = await fetch(myRequest, {signal: controller.signal});
-    const myBlob = await response.blob();
-    if (!controller.signal.aborted) {
-      await onFile(filename, myBlob, /* isUploadedFile= */ false);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+
+    const contentLengthHeader = response.headers.get('content-length');
+    const totalBytes = contentLengthHeader
+      ? parseInt(contentLengthHeader, 10)
+      : null;
+    const contentType =
+      response.headers.get('content-type') || 'application/octet-stream';
+
+    let myBlob: Blob;
+    if (response.body) {
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let loadedBytes = 0;
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value) {
+          chunks.push(value);
+          loadedBytes += value.byteLength;
+          updateLoadingProgress(filename, loadedBytes, totalBytes);
+        }
+      }
+      myBlob = new Blob(chunks as unknown as BlobPart[], {type: contentType});
+    } else {
+      myBlob = await response.blob();
+    }
+
+    if (controller.signal.aborted) {
+      return;
+    }
+
+    updateLoadingDecoding(filename);
+    await onFile(filename, myBlob, /* isUploadedFile= */ false);
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
       console.log('Fetch aborted:', filename);
+      hideLoadingIndicator(filename);
     } else {
+      hideLoadingIndicator(filename);
       showErrorToast(error, `Error loading media (${filename}):`);
     }
   }
