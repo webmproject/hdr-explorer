@@ -66,7 +66,6 @@ import {
   getSmpte209440Metadata,
   ParsedMedia,
 } from './media_parser';
-import {decodeTrackWithWebCodecs} from './video_decoder';
 import {AgtmRenderer} from './panels/agtm_renderer';
 import {Base2dRenderer, BaseWebgl2Renderer} from './panels/base_renderer';
 import {CanvasSdrRenderer} from './panels/canvas_sdr_renderer';
@@ -77,6 +76,7 @@ import {HdrRenderer} from './panels/hdr_renderer';
 import {LumaMode, LumaRenderer} from './panels/luma_renderer';
 import {Renderer} from './panels/renderer';
 import {StatsViewer} from './panels/stats_viewer';
+import {decodeTrackWithWebCodecs} from './video_decoder';
 
 function getSelectElement(id: string): HTMLSelectElement {
   return document.getElementById(id) as HTMLSelectElement;
@@ -660,6 +660,7 @@ let mediaFilename: string | null = null;
 let decodedMedia: DecodedMedia | null = null;
 let imageBitmapStats: ImageStats | null = null;
 let computedStats: ComputedStats | null = null;
+let initialComputedStats: ComputedStats | null = null;
 
 // AbortControllers for in-flight fetches
 let currentMediaFetchController: AbortController | null = null;
@@ -749,6 +750,7 @@ function updateStats() {
   if (decodedMedia == null) {
     imageBitmapStats = null;
     computedStats = null;
+    initialComputedStats = null;
     getRenderer('stats', StatsViewer)?.setStats(null);
     return;
   }
@@ -768,6 +770,9 @@ function updateStats() {
       contentTransfer,
     );
   }
+  if (initialComputedStats === null) {
+    initialComputedStats = stats;
+  }
   updateSelectedPixel();
   setStats(stats);
 }
@@ -776,17 +781,58 @@ function isStatsRequiringPanelOpen(): boolean {
   const panelsThatNeedStats = ['stats'];
   return allPanels.some(
     (panel) =>
-      panel.toggle.checked && panelsThatNeedStats.includes(panel.hashName),
+      (!panel.panelEl.hidden || panel.toggle.checked) &&
+      panelsThatNeedStats.includes(panel.hashName),
   );
+}
+
+function typeNeedsStats(
+  type: AgtmMetadataType | 'fromfile' | 'custom',
+): boolean {
+  return type !== 'fromfile' && type !== 'custom' && needsStats(type);
 }
 
 function needsFrameStats(
   type: AgtmMetadataType | 'fromfile' | 'custom',
 ): boolean {
-  if (isStatsRequiringPanelOpen()) {
+  if (selectedPixelCoords !== null || isStatsRequiringPanelOpen()) {
     return true;
   }
-  return type !== 'fromfile' && type !== 'custom' && needsStats(type);
+  if (dynamicAgtmEl.value === 'seek') {
+    return typeNeedsStats(type);
+  }
+  return false;
+}
+
+let currentFrameStatsGeneration = 0;
+
+async function updateImageBitmapStatsForCurrentFrame(): Promise<ImageStats | null> {
+  if (decodedMedia?.type !== 'video' || myVideoEl.readyState < 1) {
+    return imageBitmapStats;
+  }
+  const generation = ++currentFrameStatsGeneration;
+  try {
+    const source = await createImageBitmapSource(myVideoEl);
+    try {
+      // Guard to ensure asynchronous frame fetches do not race or apply stale
+      // frames.
+      if (generation !== currentFrameStatsGeneration) {
+        return null;
+      }
+      imageBitmapStats = new ImageStats(
+        source,
+        contentTransfer,
+        contentPrimaries,
+        {keepEncoded: true},
+      );
+      return imageBitmapStats;
+    } finally {
+      source.close();
+    }
+  } catch (e) {
+    console.error('Failed to update stats for current frame', e);
+    return null;
+  }
 }
 
 async function computeFrameStats(
@@ -826,14 +872,23 @@ async function getStatsForCurrentFrame(): Promise<ComputedStats | null> {
   if (myVideoEl.readyState < 1 || !needsFrameStats(agtmMetadataType)) {
     return null;
   }
-  return computeFrameStats(myVideoEl);
+  const stats = await updateImageBitmapStatsForCurrentFrame();
+  if (!stats) {
+    return null;
+  }
+  return getStatsForAgtm(agtmMetadataType, stats, contentTransfer);
 }
 
-async function recomputeAgtmForCurrentFrame() {
+async function updateCurrentFrameStatsAndPixel() {
   const currentFrameStats = await getStatsForCurrentFrame();
   if (currentFrameStats) {
     setStats(currentFrameStats);
   }
+  updateSelectedPixel();
+}
+
+async function recomputeAgtmForCurrentFrame() {
+  await updateCurrentFrameStatsAndPixel();
   await setAgtmMetadata();
   renderVisiblePanels();
 }
@@ -1008,9 +1063,13 @@ async function setAgtmMetadata(
       setStats(bestStats);
     }
   } else {
+    const statsForAgtm =
+      dynamicAgtmEl.value === 'seek'
+        ? computedStats
+        : (initialComputedStats ?? computedStats);
     const newAgtmMetadata = await getAgtmForType(
       agtmMetadataType,
-      computedStats,
+      statsForAgtm,
       hdrReferenceWhite,
       baselineHeadroomLinear,
     );
@@ -1092,7 +1151,8 @@ async function setAgtmMetadata(
 }
 
 function updateResetButtonsVisibility() {
-  const canShowResets = computedStats || !needsFrameStats(agtmMetadataType);
+  const canShowResets =
+    initialComputedStats || computedStats || !typeNeedsStats(agtmMetadataType);
 
   resetHdrReferenceWhiteButtonEl.hidden =
     !hdrReferenceWhiteOverridden || !canShowResets;
@@ -1672,6 +1732,30 @@ async function decodedMediaCallback(
     );
   }
 
+  if (!isFirstFrame) {
+    if (media.metadata?.hdr10pMetadata) {
+      const smpte209440El = getPanelEl('smpte209440') as HTMLTextAreaElement;
+      if (smpte209440El) {
+        smpte209440El.value =
+          media.metadata.hdr10pMetadataText ?? '(No input video)';
+      }
+      hdr10pMetadata = media.metadata.hdr10pMetadata;
+      getRenderer('hdr10plus', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+      getRenderer('hdr10pcurves', Hdr10pRenderer)?.setMetadata(hdr10pMetadata);
+    }
+
+    if (
+      (dynamicAgtmEl.value === 'all' && dynamicAgtmMetadata) ||
+      (agtmMetadataType === 'fromfile' && media.metadata?.agtmMetadata)
+    ) {
+      await setAgtmMetadata();
+    }
+
+    updateRenderersImage();
+    renderVisiblePanels();
+    return;
+  }
+
   if (media.metadata?.transferCharacteristics && !hasHash('tf')) {
     contentTransfer = media.metadata.transferCharacteristics;
     signalTransferEl.value = media.metadata.transferCharacteristics.toString();
@@ -1950,6 +2034,7 @@ function resetMedia() {
   decodedMedia = null;
   imageBitmapStats = null;
   computedStats = null;
+  initialComputedStats = null;
   selectedPixelCoords = null;
   smoothedAgtmCache = null;
   unsmoothedAgtmMetadata = null;
@@ -2480,7 +2565,7 @@ function createDynamicMetadataProcessor(
 ) {
   const metadataList: Array<AgtmMetadata | null> = [];
   let averagedStats: ComputedStats | null = null;
-  const requiresStats = needsFrameStats(agtmMetadataType);
+  const requiresStats = typeNeedsStats(agtmMetadataType);
 
   return {
     metadataList,
@@ -2681,7 +2766,7 @@ async function generateDynamicMetadataWithVideo(
       const sample = videoTrack.samplesSortedByPresentationTime[i];
       const time = sample.presentationTimeSec;
 
-      if (needsFrameStats(agtmMetadataType)) {
+      if (typeNeedsStats(agtmMetadataType)) {
         const tSeekStart = performance.now();
         await new Promise<void>((resolve) => {
           tempVideo.onseeked = () => {
@@ -3045,7 +3130,7 @@ async function handleSaveAgtmVideoClick(isDynamic: boolean) {
 }
 
 // Handle clicking on a canvas to select a pixel.
-function handleCanvasClick(e: MouseEvent) {
+async function handleCanvasClick(e: MouseEvent) {
   if (!decodedMedia || !imageBitmapStats) return;
   const canvas = e.currentTarget as HTMLCanvasElement;
 
@@ -3062,7 +3147,11 @@ function handleCanvasClick(e: MouseEvent) {
   const y = Math.max(0, Math.min(height - 1, Math.floor(texY * height)));
 
   selectedPixelCoords = {x, y};
-  updateSelectedPixel();
+  if (decodedMedia.type === 'video') {
+    await updateCurrentFrameStatsAndPixel();
+  } else {
+    updateSelectedPixel();
+  }
 }
 
 // Zoom/pan controls.
@@ -3470,6 +3559,7 @@ export function main() {
         if (currentFrameStats) {
           setStats(currentFrameStats);
         }
+        updateSelectedPixel();
       }
       updateSaveAgtmButtons();
       await setAgtmMetadata();
@@ -3613,18 +3703,30 @@ export function main() {
       }
     }
   };
-  myVideoEl.addEventListener('pause', updateTimeHash);
+  myVideoEl.addEventListener('pause', async () => {
+    updateTimeHash();
+    if (dynamicAgtmEl.value === 'seek') {
+      await recomputeAgtmForCurrentFrame();
+    } else if (needsFrameStats(agtmMetadataType)) {
+      await updateCurrentFrameStatsAndPixel();
+      renderVisiblePanels();
+    }
+  });
   myVideoEl.addEventListener('seeked', async () => {
     updateTimeHash();
     if (dynamicAgtmEl.value === 'all' && dynamicAgtmMetadata) {
       await setAgtmMetadata();
-      renderVisiblePanels();
     } else if (dynamicAgtmEl.value === 'seek') {
       await recomputeAgtmForCurrentFrame();
     } else {
       updateCurves3dRenderer();
       getRenderer('curves_3d', Curves3dRenderer)?.draw();
     }
+
+    if (dynamicAgtmEl.value !== 'seek' && needsFrameStats(agtmMetadataType)) {
+      await updateCurrentFrameStatsAndPixel();
+    }
+    renderVisiblePanels();
   });
 
   myVideoEl.addEventListener('loadedmetadata', () => {
