@@ -234,26 +234,44 @@ export class CurveEditor extends Base2dGraphRenderer {
       getGainApplicationPrimaries(metadata),
     );
 
-    const mixValues = getComponentMixValue(
-      linearSdrRelative,
-      primaries,
-      metadata,
-      metadata.altr[Math.min(this.altrIndex, metadata.altr.length - 1)],
-    );
+    const isIdentity = metadata.altr.length === 0;
+    const mixValues =
+      metadata.altr.length > 0
+        ? getComponentMixValue(
+            linearSdrRelative,
+            primaries,
+            metadata,
+            metadata.altr[
+              Math.max(0, Math.min(this.altrIndex, metadata.altr.length - 1))
+            ],
+          )
+        : [0, 0, 0];
 
-    const adaptation = agtmAdapt(metadata, this.headroomLog2);
-    const curveI = new PiecewiseCubic(adaptation.altrI.curve);
-    const curveJ = new PiecewiseCubic(adaptation.altrJ.curve);
-    const logGainsI = mixValues.map((mix) => curveI.evaluate(mix).y);
-    const logGainsJ = mixValues.map((mix) => curveJ.evaluate(mix).y);
-    const logGains = logGainsI.map(
-      (gI, i) => adaptation.weightI * gI + adaptation.weightJ * logGainsJ[i],
-    );
-    const gainMultipliers = logGains.map((lg) => exp2(lg));
-
-    const tonemappedRgbGainSpace = rgbGainSpace.map(
-      (c, i) => c * gainMultipliers[i],
-    );
+    let gainMultipliers: number[];
+    let tonemappedRgbGainSpace: number[];
+    if (isIdentity) {
+      gainMultipliers = [1, 1, 1];
+      tonemappedRgbGainSpace = [...rgbGainSpace];
+    } else {
+      const adaptation = agtmAdapt(metadata, this.headroomLog2);
+      let logGainsI = [0, 0, 0];
+      let logGainsJ = [0, 0, 0];
+      if (!adaptation.altrI.isZeroGain) {
+        const curveI = new PiecewiseCubic(adaptation.altrI.curve);
+        logGainsI = mixValues.map((mix) => curveI.evaluate(mix).y);
+      }
+      if (!adaptation.altrJ.isZeroGain) {
+        const curveJ = new PiecewiseCubic(adaptation.altrJ.curve);
+        logGainsJ = mixValues.map((mix) => curveJ.evaluate(mix).y);
+      }
+      const logGains = logGainsI.map(
+        (gI, i) => adaptation.weightI * gI + adaptation.weightJ * logGainsJ[i],
+      );
+      gainMultipliers = logGains.map((lg) => exp2(lg));
+      tonemappedRgbGainSpace = rgbGainSpace.map(
+        (c, i) => c * gainMultipliers[i],
+      );
+    }
     const tonemappedRgbContentSpace = primariesConvert(
       tonemappedRgbGainSpace,
       getGainApplicationPrimaries(metadata),
@@ -271,7 +289,7 @@ export class CurveEditor extends Base2dGraphRenderer {
     const fmt2s = (x: number[]) => `[${x.map(fmt2).join(', ')}]`;
     const primariesStr = getPrimariesName(primaries);
     const gainPrimariesStr = getPrimariesName(
-      getGainApplicationPrimaries(this.metadata!),
+      getGainApplicationPrimaries(metadata),
     );
     const tonemappedRgbContentSpaceNits = tonemappedRgbContentSpace.map(
       (c) => c * hdrReferenceWhite,
@@ -297,12 +315,16 @@ export class CurveEditor extends Base2dGraphRenderer {
 
   setMetadata(metadata: AgtmMetadata) {
     this.metadata = structuredClone(metadata);
-    this.altrIndex = Math.min(this.altrIndex, this.metadata.altr.length - 1);
+    this.altrIndex =
+      this.metadata.altr.length > 0
+        ? Math.max(0, Math.min(this.altrIndex, this.metadata.altr.length - 1))
+        : 0;
     const points =
-      this.altrIndex >= 0
-        ? metadata.altr[this.altrIndex].curve
-        : [{x: 0, y: 0}];
-    this.curve = new PiecewiseCubic(points);
+      this.metadata.altr.length > 0 &&
+      this.altrIndex < this.metadata.altr.length
+        ? this.metadata.altr[this.altrIndex].curve
+        : null;
+    this.curve = points ? new PiecewiseCubic(points) : null;
   }
 
   setUnsmoothedMetadata(metadata: AgtmMetadata | null) {
@@ -310,7 +332,17 @@ export class CurveEditor extends Base2dGraphRenderer {
   }
 
   setAltrIndex(index: number) {
-    this.altrIndex = index;
+    this.altrIndex =
+      this.metadata && this.metadata.altr.length > 0
+        ? Math.max(0, Math.min(index, this.metadata.altr.length - 1))
+        : 0;
+    const points =
+      this.metadata &&
+      this.metadata.altr.length > 0 &&
+      this.altrIndex < this.metadata.altr.length
+        ? this.metadata.altr[this.altrIndex].curve
+        : null;
+    this.curve = points ? new PiecewiseCubic(points) : null;
   }
 
   setShowGainCurve(show: boolean) {
@@ -653,8 +685,13 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.context.save();
     this.clipToGraphArea();
 
-    // Draw control points only if a single curve was requested.
-    if (altrMax == null && this.showControlPoints && !dashed) {
+    // Draw control points only if a single curve was requested and not zero gain.
+    if (
+      altrMax == null &&
+      this.showControlPoints &&
+      !dashed &&
+      !altrMin.isZeroGain
+    ) {
       this.context.strokeStyle = color + 'FF';
       this.context.fillStyle = color + 'FF';
       for (let i = 0; i < curveMin.getControlPoints().length; ++i) {
@@ -686,9 +723,15 @@ export class CurveEditor extends Base2dGraphRenderer {
       const startX = Math.max(this.graphBottomLeft.x, this.graphAreaLeftX);
       for (let vX = startX; vX <= this.graphAreaRightX; vX += 2) {
         const x = this.viewToModel(vX).x;
-        let y = wMin * curveMin.evaluate(x).y!;
+        const gainMin = altrMin.isZeroGain ? 0 : curveMin.evaluate(x).y!;
+        const gainMax = altrMax?.isZeroGain
+          ? 0
+          : curveMax
+            ? curveMax.evaluate(x).y!
+            : 0;
+        let y = wMin * gainMin;
         if (altrMax != null) {
-          y += wMax * curveMax!.evaluate(x).y!;
+          y += wMax * gainMax;
         }
         const clampVal = undefined; // Clamping disabled for now. Otherwise would be: exp2(headroom!)
         const p = this.modelToView({x, y}, clampVal);
@@ -773,7 +816,8 @@ export class CurveEditor extends Base2dGraphRenderer {
 
   private drawSelectedPixelLine() {
     const metadata = this.metadata;
-    if (!this.selectedPixelRgbLinear || !metadata) return;
+    if (!this.selectedPixelRgbLinear || !metadata || metadata.altr.length === 0)
+      return;
 
     const multiplier = getMaxSdrRelative(
       this.contentTransfer,
@@ -819,23 +863,29 @@ export class CurveEditor extends Base2dGraphRenderer {
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     if (this.showGainCurve && this.metadata) {
-      let minY = Infinity;
-      let maxY = -Infinity;
-      for (const altr of this.metadata.altr) {
-        for (const point of altr.curve) {
-          minY = Math.min(minY, point.y);
-          maxY = Math.max(maxY, point.y);
-        }
-      }
-      if (maxY <= 0.1) {
-        // All points are at or below y=0. Move the origin up.
-        this.graphBottomLeft.y = this.graphAreaTopY;
-      } else if (minY < -0.1) {
-        // Curve crosses y=0. Center the origin.
+      if (this.metadata.altr.length === 0) {
+        // Zero gain: flat line at y=0. Center the origin.
         this.graphBottomLeft.y = this.graphAreaTopY + this.graphAreaHeight / 2;
       } else {
-        // All points are above y=0. Origin at bottom.
-        this.graphBottomLeft.y = this.graphAreaBottomY;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const altr of this.metadata.altr) {
+          for (const point of altr.curve) {
+            minY = Math.min(minY, point.y);
+            maxY = Math.max(maxY, point.y);
+          }
+        }
+        if (maxY <= 0.1) {
+          // All points are at or below y=0. Move the origin up.
+          this.graphBottomLeft.y = this.graphAreaTopY;
+        } else if (minY < -0.1) {
+          // Curve crosses y=0. Center the origin.
+          this.graphBottomLeft.y =
+            this.graphAreaTopY + this.graphAreaHeight / 2;
+        } else {
+          // All points are above y=0. Origin at bottom.
+          this.graphBottomLeft.y = this.graphAreaBottomY;
+        }
       }
     } else {
       // Default for tone map view.
@@ -923,7 +973,6 @@ export class CurveEditor extends Base2dGraphRenderer {
     return bestIndex;
   }
   override mouseDown(e: MouseEvent) {
-    if (!this.curve) return;
     const viewPoint = this.getViewPoint(e);
 
     // Ignore clicks outside the graph area.
@@ -933,6 +982,14 @@ export class CurveEditor extends Base2dGraphRenderer {
       viewPoint.y < this.graphAreaTopY ||
       viewPoint.y > this.graphAreaBottomY
     ) {
+      return;
+    }
+
+    if (!this.curve) {
+      if (e.button === 0) {
+        this.dragIndex = null;
+        this.dragViewPoint = viewPoint;
+      }
       return;
     }
 
@@ -987,7 +1044,6 @@ export class CurveEditor extends Base2dGraphRenderer {
   }
 
   override mouseMove(e: MouseEvent) {
-    if (!this.curve) return;
     const oldViewPoint = this.dragViewPoint;
     this.dragViewPoint = this.getViewPoint(e);
     if (!oldViewPoint) {
@@ -1004,9 +1060,7 @@ export class CurveEditor extends Base2dGraphRenderer {
       this.draw();
       return;
     }
-    if (this.dragIndex == null) {
-      return;
-    }
+    if (!this.curve) return;
 
     if (this.showGainCurve) {
       const modelOld = this.curve.getControlPoints()[this.dragIndex];

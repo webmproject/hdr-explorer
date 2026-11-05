@@ -37,6 +37,7 @@ export declare interface Altr {
   // Up to 32 points, x in [0., 64.], y in [-6., 6.], and a slope m (any value).
   curve: Point2[];
   mix: ComponentMix;
+  isZeroGain?: boolean;
 }
 
 /** AGTM metadata. */
@@ -44,6 +45,7 @@ export declare interface AgtmMetadata {
   // Between 0 and 4 alternate images.
   // The "zero color gain" curve is implicit and not included here.
   altr: Altr[];
+  has_adaptive_tone_map_flag?: boolean;
   // An optional CICP enum representing standard primaries (e.g., sRGB, P3, BT.2020).
   gain_application_space_primaries?: number;
   // An optional array of 8 floats: [rx, ry, gx, gy, bx, by, wx, wy] representing chromaticity coordinates.

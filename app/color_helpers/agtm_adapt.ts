@@ -44,6 +44,7 @@ function getZeroGainAltr(metadata: AgtmMetadata): Altr {
       min: 0,
       channel: 1,
     },
+    isZeroGain: true,
   };
 }
 
@@ -179,22 +180,48 @@ export function agtmToneMap(
   metadata: AgtmMetadata,
   adaptation: AgtmAdaptResult,
 ): number[] {
-  const curveI = new PiecewiseCubic(adaptation.altrI.curve);
-  const curveJ = new PiecewiseCubic(adaptation.altrJ.curve);
-  const mixI = getComponentMixValue(
-    sdrRelative,
-    contentPrimaries,
-    metadata,
-    adaptation.altrI,
-  );
-  const mixJ = getComponentMixValue(
-    sdrRelative,
-    contentPrimaries,
-    metadata,
-    adaptation.altrJ,
-  );
-  const logGainsI = mixI.map((mix) => curveI.evaluate(mix).y);
-  const logGainsJ = mixJ.map((mix) => curveJ.evaluate(mix).y);
+  // SMPTE ST 2094-50 Section B.4: When there are no alternate images (N_alt = 0),
+  // no tone mapping is to be performed, and the function ToneMap evaluates to the
+  // identity regardless of targeted headroom.
+  if (metadata.altr.length === 0) {
+    return [...sdrRelative];
+  }
+  const isZeroI = adaptation.altrI.isZeroGain === true;
+  const isZeroJ = adaptation.altrJ.isZeroGain === true;
+  if (
+    (isZeroI && isZeroJ) ||
+    (isZeroI && adaptation.weightJ === 0) ||
+    (isZeroJ && adaptation.weightI === 0)
+  ) {
+    return [...sdrRelative];
+  }
+
+  const logGainsI = isZeroI
+    ? [0, 0, 0]
+    : (() => {
+        const curveI = new PiecewiseCubic(adaptation.altrI.curve);
+        const mixI = getComponentMixValue(
+          sdrRelative,
+          contentPrimaries,
+          metadata,
+          adaptation.altrI,
+        );
+        return mixI.map((mix) => curveI.evaluate(mix).y);
+      })();
+
+  const logGainsJ = isZeroJ
+    ? [0, 0, 0]
+    : (() => {
+        const curveJ = new PiecewiseCubic(adaptation.altrJ.curve);
+        const mixJ = getComponentMixValue(
+          sdrRelative,
+          contentPrimaries,
+          metadata,
+          adaptation.altrJ,
+        );
+        return mixJ.map((mix) => curveJ.evaluate(mix).y);
+      })();
+
   const logGains = logGainsI.map(
     (gI, i) => adaptation.weightI * gI + adaptation.weightJ * logGainsJ[i],
   );
@@ -210,6 +237,9 @@ export function grayAdaptation(
   metadata: AgtmMetadata,
   targetedHdrHeadroom: number,
 ): number {
+  if (metadata.altr.length === 0) {
+    return sdrRelative;
+  }
   const gray = [sdrRelative, sdrRelative, sdrRelative];
   const adaptation = agtmAdapt(metadata, targetedHdrHeadroom);
   const tonemapped = agtmToneMap(
@@ -782,6 +812,9 @@ export function agtmToneMapWithLut(
   lut3d: Float32Array | null,
   lut1d: Float32Array | null,
 ): number[] {
+  if (metadata.altr.length === 0) {
+    return [...sdrRelative];
+  }
   const lutInputMax = getMaxSdrRelative(
     contentTransfer,
     metadata.hdr_reference_white,

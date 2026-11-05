@@ -2752,7 +2752,10 @@ function createDynamicMetadataProcessor(
           frameComputedCallback(null, averagedStats, time);
         }
       } else {
-        const originalMix = structuredClone(metadata.altr[0].mix);
+        const originalMix =
+          metadata.altr.length > 0
+            ? structuredClone(metadata.altr[0].mix)
+            : kDefaultMetadata.altr[0].mix;
         applyOverrides(metadata, originalMix);
         metadataList.push(metadata);
         if (frameComputedCallback) {

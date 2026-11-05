@@ -52,6 +52,9 @@ export const kAgtmToneMapperGlsl = `
   uniform vec4 gain_application_space_rg;
   uniform vec4 gain_application_space_bw;
   uniform vec3 luma_coeffs;
+  uniform bool is_identity;
+  uniform bool is_zero_gain_i;
+  uniform bool is_zero_gain_j;
 
   // LUT-based tone mapping is designed to match the Android hardware LUT API
   // https://developer.android.com/media/grow/hdr-lut
@@ -234,6 +237,10 @@ export const kAgtmToneMapperGlsl = `
   }
 
   vec3 AgtmLogGain(vec3 rgb, bool j, bool merge_hlg_ootf) {
+    bool is_zero = j ? is_zero_gain_j : is_zero_gain_i;
+    if (is_zero) {
+      return vec3(0.0);
+    }
     vec3 mix_rgb = j ? mix_rgb_j : mix_rgb_i;
     vec3 mix_Mmc = j ? mix_Mmc_j : mix_Mmc_i;
     vec3 mix = EvaluateChannelMix(rgb, mix_rgb, mix_Mmc);
@@ -259,6 +266,9 @@ export const kAgtmToneMapperGlsl = `
   // If merge_hlg_ootf is true, the HLG OOTF is merged into the AGTM tone mapping.
   // Only matches the real HLG OOTF if the component mixing function is Rec.2020 luma.
   vec3 AgtmToneMap(vec3 rgb, int input_color_primaries, bool merge_hlg_ootf) {
+    if (is_identity) {
+      return rgb;
+    }
     if (lut1d_size > 1.0 || lut3d_size > 1.0) {
       rgb = ConvertToLutInputSpace(rgb, input_color_primaries);
 
@@ -485,6 +495,19 @@ export class AgtmToneMapper {
 
     gl.uniform1f(gl.getUniformLocation(p, 'weight_i'), a.weightI);
     gl.uniform1f(gl.getUniformLocation(p, 'weight_j'), a.weightJ);
+
+    const isZeroI = a.altrI.isZeroGain === true;
+    const isZeroJ = a.altrJ.isZeroGain === true;
+    const isIdentity =
+      m.altr.length === 0 ||
+      (isZeroI && isZeroJ) ||
+      (isZeroI && a.weightJ === 0) ||
+      (isZeroJ && a.weightI === 0);
+
+    gl.uniform1i(gl.getUniformLocation(p, 'is_identity'), isIdentity ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(p, 'is_zero_gain_i'), isZeroI ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(p, 'is_zero_gain_j'), isZeroJ ? 1 : 0);
+
     const gainPrimaries = getGainApplicationPrimaries(m);
     let gainChromaticities =
       typeof gainPrimaries === 'number'

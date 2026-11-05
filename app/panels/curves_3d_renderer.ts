@@ -623,13 +623,18 @@ export class Curves3dRenderer implements Renderer {
    * @return Array of Z values (either log2 gain or linear SDR-relative output).
    */
   private evaluateCurveAt(meta: AgtmMetadata, yValues: number[]): number[] {
+    if (meta.altr.length === 0) {
+      return yValues.map((yVal) => (this.showGainCurve ? 0 : yVal));
+    }
     const adaptation = agtmAdapt(meta, this.headroomLog2);
-    const curveI = new PiecewiseCubic(adaptation.altrI.curve);
-    const curveJ = new PiecewiseCubic(adaptation.altrJ.curve);
+    const isZeroI = adaptation.altrI.isZeroGain === true;
+    const isZeroJ = adaptation.altrJ.isZeroGain === true;
+    const curveI = isZeroI ? null : new PiecewiseCubic(adaptation.altrI.curve);
+    const curveJ = isZeroJ ? null : new PiecewiseCubic(adaptation.altrJ.curve);
     return yValues.map((yVal) => {
-      const logGain =
-        adaptation.weightI * curveI.evaluate(yVal).y +
-        adaptation.weightJ * curveJ.evaluate(yVal).y;
+      const gainI = isZeroI ? 0 : curveI!.evaluate(yVal).y;
+      const gainJ = isZeroJ ? 0 : curveJ!.evaluate(yVal).y;
+      const logGain = adaptation.weightI * gainI + adaptation.weightJ * gainJ;
       if (this.showGainCurve) {
         return logGain;
       }
